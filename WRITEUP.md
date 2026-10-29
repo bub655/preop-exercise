@@ -170,18 +170,41 @@ distinguish the two.
 
 ## Results on the 50 labeled cases
 
-| Extractor | Decision match | Category set match | Aggregate | Determinism (10 runs) |
-|-----------|---------------:|-------------------:|----------:|----------------------:|
-| rules     | 50/50          | 50/50              | 100%      | 100% byte-identical   |
-| rules, synthetic held-out (2000 cases, 5 seeds) | 2000/2000 | 2000/2000 | 100% | n/a |
-| claude    | not run        | not run            |           |                       |
+| Extractor | Set | Decision match | Category set match | Aggregate | Determinism |
+|-----------|-----|---------------:|-------------------:|----------:|-------------|
+| rules     | 50 sample cases | 50/50 | 50/50 | 100% | 10 runs byte-identical |
+| rules     | synthetic held-out, 5 seeds | 2000/2000 | 2000/2000 | 100% | n/a |
+| rules     | 10 hand-written held-out | 10/10 | 10/10 | 100% | n/a |
+| claude    | 50 sample cases | 50/50 | 50/50 | 100% | 10 no-cache runs: decision 100%, exact bytes 50% (see below) |
+| claude    | 10 hand-written held-out | 10/10 | 10/10 | 100% | n/a |
+| union     | 50 sample cases | 50/50 | 50/50 | 100% | from cache |
+| union     | 10 hand-written held-out | 10/10 | 10/10 | 100% | from cache |
 
-The `claude` and `union` rows were not run because no Anthropic key was
-available in the environment where this was built. The code path is covered by
-tests with a fake client (parsing, caching, error, refusal, and truncation
-handling). To run it: set `ANTHROPIC_API_KEY`, then
-`make baseline evals EXTRACTOR=claude`. Cached extractions in `data/cache/`
-make a second run free and byte-identical.
+The `claude` runs used `claude-opus-5-5` at effort `medium`, one call per
+document, about 290 documents across both sets, roughly 3 seconds and 1,500
+input tokens each. Three observations matter more than the scores:
+
+- **Zero rejected spans.** Across every document the model never returned a
+  quote that failed to ground. Nothing it proposed had to be thrown away for
+  not existing in the source.
+- **115 advisory flags, zero blocking ones.** The model also quoted things the
+  pattern tables do not recognize, such as a note's title line or "Proposed
+  procedure: ...". Those are shown to the reviewer and change nothing, which is
+  the designed behavior for model-only spans on a set the rules already cover.
+- **What "exact bytes 50%" means.** On ten fresh no-cache replays of one case,
+  the decision, issues, checks' statuses, and assumptions were identical every
+  time. The only varying bytes were the model's quote boundaries in the R4
+  evidence: "ADDENDUM 08:30: Re-measured 137/78 mmHg" one run,
+  "08:30: Re-measured 137/78 mmHg" the next, "Re-measured 137/78 mmHg" the
+  third. Same reading, same parsed value, same timestamp. With the cache on,
+  repeat runs are byte-identical. If evidence quotes must also be stable across
+  cold runs, the fix is to normalize a grounded span to its containing line
+  before it becomes evidence, which is a one-line change in the fact layer.
+
+On these two sets the model adds no correct decisions the rules did not
+already reach, which is expected: the tables were grown against them. Its
+value shows up on inputs neither author anticipated, where the rules fail
+closed and the model can still locate the span for code to verify.
 
 Per-category precision and recall are all 1.0 on the sample. The sample is
 small and the pattern tables were built against it, so the honest reading is

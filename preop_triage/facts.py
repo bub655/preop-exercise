@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
+from dataclasses import replace
+
 from .classify import classify, classify_doc_kind
 from .ingest import parse_iso
 from .model import Doc, Fact, ReviewFlag, Span, SpanKind
@@ -70,6 +72,22 @@ def _observed_at(doc: Doc, span: Span) -> datetime | None:
 _ADVISORY_REASONS = {"NO_PATTERN_MATCH", "UNPARSEABLE_BP", "UNPARSEABLE_TEMP"}
 
 
+def _line_span(doc: Doc, span: Span) -> Span:
+    """The same span with its quote widened to the containing line.
+
+    Used for value kinds (BP, temperature) only, so evidence does not depend on where a
+    model happened to start or stop quoting. Offset and timestamp stay with the reading.
+    """
+    text = doc.text or ""
+    if span.offset is None:
+        return span
+    start = text.rfind("\n", 0, span.offset) + 1
+    end = text.find("\n", span.offset)
+    end = len(text) if end < 0 else end
+    line = text[start:end].strip()
+    return replace(span, quote=line) if line else span
+
+
 def _flag(span: Span, reason: str, code_label: str | None = None) -> ReviewFlag:
     blocking = not (reason in _ADVISORY_REASONS and span.origin != "rules")
     return ReviewFlag(reason, span.doc_id, span.quote, span.model_label, code_label, RULE_FOR_KIND.get(span.kind), blocking)
@@ -100,7 +118,7 @@ def spans_to_facts(spans: list[Span], docs: dict[str, Doc], policy: Policy) -> t
             if bp is None:
                 flags.append(_flag(span, "UNPARSEABLE_BP"))
             else:
-                facts.append(_text_fact("BP", bp, span, when, "text_bp"))
+                facts.append(_text_fact("BP", bp, _line_span(doc, span), when, "text_bp"))
             continue
         if span.kind == SpanKind.VITAL_TEMP:
             try:
@@ -118,7 +136,7 @@ def spans_to_facts(spans: list[Span], docs: dict[str, Doc], policy: Policy) -> t
             if unit.startswith("C"):
                 m = re.search(r"(\d{2,3}(?:\.\d+)?)\s*(?:°\s*|degrees?\s+)?(?:[cC]\b|celsius|centigrade)", span.quote, re.IGNORECASE)
                 meta["converted_from"] = (f"{m.group(1)} C" if m else span.quote) + (" (unit inferred)" if "unit_inferred" in meta else "")
-            facts.append(_text_fact("TEMP", temp_f, span, when, "text_temp", meta))
+            facts.append(_text_fact("TEMP", temp_f, _line_span(doc, span), when, "text_temp", meta))
             continue
 
         label, flag = classify(span, policy)

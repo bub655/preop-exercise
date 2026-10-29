@@ -15,7 +15,7 @@ from typing import Any
 from .engine import CATEGORY_FOR_RULE
 from .ingest import structured_temp_f
 from .model import Evidence, ReviewFlagOut, TriageOutput
-from .parsers import UnitConflict, parse_bp, parse_temp_f, q1
+from .parsers import UnitConflict, iter_bp_matches, iter_temp_matches, parse_temp_f, q1
 from .policy import Policy, load_policy
 
 _WS = re.compile(r"\s+")
@@ -64,11 +64,18 @@ def _exclusion_backed(e: Evidence, docs: dict[str, str], submission: dict[str, A
         text = docs.get(e.doc_id)
         if text is None or not _regrounds(e.quote, text):
             return False
-        try:
-            parsed = parse_temp_f(e.quote)
-        except UnitConflict:
-            parsed = None
-        return _exceeds(parse_bp(e.quote), parsed[0] if parsed else None, policy)
+        # the quote is a whole line and may hold several readings; any one over the threshold backs the exclusion
+        for _, m in iter_bp_matches(e.quote):
+            if _exceeds((int(m.group("s")), int(m.group("d"))), None, policy):
+                return True
+        for _, m in iter_temp_matches(e.quote):
+            try:
+                parsed = parse_temp_f(e.quote[m.start():])
+            except UnitConflict:
+                continue
+            if parsed and _exceeds(None, parsed[0], policy):
+                return True
+        return False
     found, vital = _resolve(e.source, submission)
     if not found or not isinstance(vital, dict):
         return False

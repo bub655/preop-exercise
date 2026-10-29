@@ -66,3 +66,11 @@ def test_serialization_is_stable() -> None:
     a = check_invariants(out, DOCS, SUB)
     b = check_invariants(out, DOCS, SUB)
     assert json.dumps(a.model_dump(), sort_keys=True) == json.dumps(b.model_dump(), sort_keys=True)
+
+
+def test_exclusion_backed_when_line_holds_normal_then_high_reading() -> None:
+    from preop_triage.policy import load_policy
+
+    docs = {"d1": "08:00 BP 120/80. 09:00 BP 190/110."}
+    out = TriageOutput(decision="NOT_CLEARED", issues=[_issue("ACUTE_SAFETY_EXCLUSION", "R4", "08:00 BP 120/80. 09:00 BP 190/110.")])
+    assert check_invariants(out, docs, SUB, load_policy()).decision == "NOT_CLEARED"

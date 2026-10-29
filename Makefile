@@ -2,7 +2,9 @@ INPUT ?= data/patients_sample_50.jsonl
 OUTPUT ?= data/baseline_outputs.jsonl
 REPORT ?= data/eval_report.json
 DETERMINISM_REPORT ?= data/determinism_report.json
-MODEL ?= gpt-4.1-mini
+MODEL ?= claude-opus-5-5
+EXTRACTOR ?= rules
+CACHE_FLAG ?=
 
 .PHONY: baseline evals determinism score report test all clean
 
@@ -10,7 +12,8 @@ baseline:
 	uv run run_baseline.py \
 		--input $(INPUT) \
 		--output $(OUTPUT) \
-		--model $(MODEL)
+		--model $(MODEL) \
+		--extractor $(EXTRACTOR) $(CACHE_FLAG)
 
 evals:
 	uv run run_evals.py \
@@ -23,6 +26,7 @@ determinism:
 		--determinism \
 		--input $(INPUT) \
 		--model $(MODEL) \
+		--extractor $(EXTRACTOR) $(CACHE_FLAG) \
 		--report $(DETERMINISM_REPORT)
 
 score:
@@ -32,11 +36,7 @@ report:
 	uv run view_report.py --report $(REPORT)
 
 test:
-	uv run \
-		--with 'openai>=2.0.0' \
-		--with 'pydantic>=2.8.0' \
-		--with 'pytest>=8.0.0' \
-		python -m pytest tests
+	uv run pytest -q
 
 all: baseline evals determinism score
 

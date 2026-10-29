@@ -33,3 +33,6 @@ data/eval_report.json
 data/determinism_report.json
 .superpowers/
 uv.lock
+
+# Extraction cache (model responses keyed by document hash)
+data/cache/

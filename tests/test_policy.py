@@ -19,3 +19,9 @@ def test_policy_loads_defaults() -> None:
     assert p.lab_codes.normalize("BMP") == "BMP"
     assert p.required_tests_by_risk["HIGH"] == ["CBC", "CMP"]
     assert p.required_tests_by_risk["MODERATE"] == ["CBC"]
+
+
+def test_drug_classify_returns_first_occurrence_not_longest_name() -> None:
+    p = load_policy()
+    assert p.drugs.classify("Resume warfarin at the usual home dose, with enoxaparin bridging restarted") == ("warfarin", "anticoagulant")
+    assert p.drugs.classify("Bridge with enoxaparin; resume warfarin later") == ("enoxaparin", "anticoagulant")

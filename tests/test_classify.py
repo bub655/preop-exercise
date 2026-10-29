@@ -134,3 +134,7 @@ def test_procedure_match(scheduled: str, consent: str, expected: bool) -> None:
 
 def test_procedure_match_unknown_noun_is_none() -> None:
     assert procedure_matches("Elective frobnication", "frobnication", POLICY) is None
+
+
+def test_med_mention_stripped_quote_still_classifies() -> None:
+    assert classify(_span(SpanKind.MED_MENTION, "warfarin, discontinued by"), POLICY)[0] == "NOT_TAKING"

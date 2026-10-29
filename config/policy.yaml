@@ -118,7 +118,7 @@ patterns:
       - 'not on any anticoagulant'
       - 'not currently (?:on )?anticoagulat\w+'
       - 'no longer (?:on|taking)\s+{DRUG}'
-      - '{DRUG}[^\n]{0,80}(?:discontinued|stopped)\s+(?:by|in)\s'
+      - '{DRUG}[^\n]{0,80}(?:discontinued|stopped)\s+(?:by|in)\b'
     UNKNOWN:
       - '{DRUG}:?\s*patient unable to confirm'
       - 'unable to confirm whether[^\n]{0,40}{DRUG}'

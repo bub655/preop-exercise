@@ -1,60 +1,33 @@
-"""Shared policy, schema, and prompt helpers for the pre-op triage scripts."""
+"""Public entry point and submission schema for the pre-op triage exercise.
+
+`triage_submission` keeps the starter signature. The implementation lives in
+the `preop_triage` package: a deterministic, grounded pipeline where a model
+(optionally) locates text and code makes every decision.
+"""
 
 from __future__ import annotations
 
-import json
 from typing import Literal
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import BaseModel, Field
 
-# -------------------------
-# Policy + system prompt
-# -------------------------
+from preop_triage.model import Decision, Issue, IssueCategory, ProcedureRisk, TriageOutput
+from preop_triage.pipeline import make_extractor, run
+from preop_triage.policy import Policy, load_policy
 
-BASELINE_SYSTEM_PROMPT = """
-You are a clinical operations assistant for pre-op scheduling triage.
-Base decisions only on the policy below. General clinical knowledge may be used to interpret the record (e.g., drug brand names, unit conversions), not to add criteria.
+__all__ = [
+    "Decision",
+    "IssueCategory",
+    "ProcedureRisk",
+    "PatientSubmission",
+    "TriageOutput",
+    "TriageIssue",
+    "triage_submission",
+]
 
-Cadence Surgical Center Pre-Operative Scheduling Policy (effective Jan 1, 2026)
+TriageIssue = Issue
 
-Output exactly one status:
-- READY
-- NEEDS_FOLLOW_UP
-- NOT_CLEARED
-
-Rule 1: Required documentation
-- History and Physical (H&P) must exist and be completed within 30 days of procedure date.
-- Signed Surgical Consent must exist.
-If documentation is missing/outdated -> NEEDS_FOLLOW_UP.
-
-Rule 2: Required testing by procedure risk
-- LOW or MODERATE risk: CBC within 30 days of procedure date.
-- HIGH risk: CBC within 14 days and CMP within 14 days.
-Use only the most recent result for each required test.
-If a required test is missing or outside window -> NEEDS_FOLLOW_UP.
-
-Rule 3: Anticoagulation management
-If the patient is currently taking an anticoagulant, a perioperative anticoagulation plan must be documented and clear.
-If no clear plan is documented -> NEEDS_FOLLOW_UP.
-
-Rule 4: Acute safety exclusions
-If any of the following are present at review time -> NOT_CLEARED:
-- Systolic BP >= 180 mmHg
-- Diastolic BP >= 110 mmHg
-- Temperature > 100.4 F
-Use the most recent relevant vital.
-
-Final determination
-- READY only if all required criteria are satisfied and no exclusions are present.
-- If a required field needed to evaluate a rule is missing/unknown -> NEEDS_FOLLOW_UP.
-
-Output requirements
-- Return exactly one JSON object.
-""".strip()
-
-Decision = Literal["READY", "NEEDS_FOLLOW_UP", "NOT_CLEARED"]
-ProcedureRisk = Literal["LOW", "MODERATE", "HIGH"]
-IssueCategory = Literal[
+ISSUE_CATEGORIES: list[str] = [
     "REQUIRED_DOCUMENTATION",
     "REQUIRED_TESTING",
     "ANTICOAGULATION_MANAGEMENT",
@@ -62,25 +35,26 @@ IssueCategory = Literal[
     "MISSING_REQUIRED_DATA",
 ]
 
+
 # -------------------------
-# Schemas
+# Submission schema (unchanged shape from the starter)
 # -------------------------
+
 
 class PatientName(BaseModel):
-
     given: str | None = None
     family: str | None = None
 
-class PatientInfo(BaseModel):
 
+class PatientInfo(BaseModel):
     id: str | None = None
     mrn: str | None = None
     name: PatientName | None = None
     dob: str | None = None
     sex: str | None = None
 
-class ProcedureInfo(BaseModel):
 
+class ProcedureInfo(BaseModel):
     case_id: str | None = None
     procedure_type: str | None = None
     procedure_risk: ProcedureRisk | None = None
@@ -88,31 +62,32 @@ class ProcedureInfo(BaseModel):
     is_elective: bool | None = None
     location: str | None = None
 
-class BloodPressureVital(BaseModel):
 
+class BloodPressureVital(BaseModel):
     type: str | None = None
     systolic: float | int | None = None
     diastolic: float | int | None = None
     date: str | None = None
     source: str | None = None
 
-class TemperatureVital(BaseModel):
 
+class TemperatureVital(BaseModel):
     type: str | None = None
     value_f: float | int | None = None
     date: str | None = None
     source: str | None = None
 
-class GenericVital(BaseModel):
 
+class GenericVital(BaseModel):
     type: str | None = None
     date: str | None = None
     source: str | None = None
 
+
 Vital = BloodPressureVital | TemperatureVital | GenericVital
 
-class LabResult(BaseModel):
 
+class LabResult(BaseModel):
     id: str | None = None
     code: str | None = None
     display: str | None = None
@@ -120,28 +95,29 @@ class LabResult(BaseModel):
     status: str | None = None
     source: str | None = None
 
-class Medication(BaseModel):
 
+class Medication(BaseModel):
     name: str | None = None
     active: bool | None = None
+
 
 class Condition(BaseModel):
-
     name: str | None = None
     active: bool | None = None
 
-class Document(BaseModel):
 
+class Document(BaseModel):
     doc_id: str | None = None
     type: str | None = None
     date: str | None = None
     author: str | None = None
     text: str | None = None
 
-class SubmissionMetadata(BaseModel):
 
+class SubmissionMetadata(BaseModel):
     submission_received_at: str | None = None
     source_system: str | None = None
+
 
 class PatientSubmission(BaseModel):
     """Single submission package shape from the take-home prompt."""
@@ -155,83 +131,43 @@ class PatientSubmission(BaseModel):
     documents: list[Document] = Field(default_factory=list)
     metadata: SubmissionMetadata | None = None
 
-class TriageIssue(BaseModel):
-
-    category: IssueCategory
-    evidence: str
-
-class TriageOutput(BaseModel):
-    """Structured output contract for triage responses."""
-
-    decision: Decision
-    issues: list[TriageIssue] = Field(validation_alias=AliasChoices("issues"))
-    explanation: str
-
 
 def triage_output_json_schema() -> dict[str, object]:
-    """Return the JSON schema used for structured model outputs."""
-
-    schema = TriageOutput.model_json_schema()
-    return schema
+    return TriageOutput.model_json_schema()
 
 
 # -------------------------
-# Prompt helpers
+# Entry point
 # -------------------------
 
+_POLICY: Policy | None = None
 
-def build_user_prompt(submission: dict[str, object]) -> str:
-    """Format a single submission package as user input."""
 
-    sections = [
-        "Evaluate this patient package for pre-op scheduling readiness using the provided policy.",
-        "Return your response as JSON.",
-        "Submission JSON:",
-        json.dumps(submission, sort_keys=True),
-    ]
-    return "\n".join(sections)
+def _policy() -> Policy:
+    global _POLICY
+    if _POLICY is None:
+        _POLICY = load_policy()
+    return _POLICY
+
+
+ExtractorName = Literal["rules", "claude", "union"]
 
 
 def triage_submission(
     submission: dict[str, object] | PatientSubmission,
     *,
     model: str,
+    extractor: str = "rules",
+    use_cache: bool = True,
+    policy: Policy | None = None,
 ) -> TriageOutput:
-    """Naive baseline implementation: single LLM call with JSON response output."""
+    """Triage one submission package.
 
-    # Import lazily so core utilities remain usable without OpenAI installed.
-    from openai import OpenAI
-
-    if isinstance(submission, PatientSubmission):
-        submission_payload = submission.model_dump()
-    else:
-        submission_payload = PatientSubmission.model_validate(submission).model_dump()
-
-    client = OpenAI()
-    request_kwargs: dict[str, object] = {
-        "model": model,
-        "instructions": BASELINE_SYSTEM_PROMPT,
-        "input": [
-            {
-                "type": "message",
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": build_user_prompt(submission_payload),
-                    }
-                ],
-            }
-        ],
-        "text": {
-            "format": {
-                "type": "json_schema",
-                "name": "preop_triage_output",
-                "schema": triage_output_json_schema(),
-                "strict": False,
-            }
-        },
-    }
-
-    response = client.responses.create(**request_kwargs)
-    return TriageOutput.model_validate_json(response.output_text)
+    extractor: "rules" (offline, deterministic), "claude" (model locates spans,
+    cached by document hash), or "union" (both). Every span passes the same
+    grounding, parsing, classification, policy, and invariant gates.
+    """
+    payload = submission.model_dump() if isinstance(submission, PatientSubmission) else PatientSubmission.model_validate(submission).model_dump()
+    pol = policy or _policy()
+    ext = make_extractor(extractor, policy=pol, model=model, use_cache=use_cache)
+    return run(payload, policy=pol, extractor=ext)

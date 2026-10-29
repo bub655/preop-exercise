@@ -50,10 +50,15 @@ class DrugTable(BaseModel):
     def classify(self, text: str) -> tuple[str | None, str]:
         """Return (canonical_generic, class) for the first known drug in text."""
         lowered = text.lower()
+        best: tuple[int, int, str, str] | None = None  # (position, -len(name), canonical, class)
         for name, canonical, cls_name in self._index():
-            if re.search(rf"\b{re.escape(name)}\b", lowered):
-                return canonical, cls_name
-        return None, "other"
+            m = re.search(rf"\b{re.escape(name)}\b", lowered)
+            if m is None:
+                continue
+            key = (m.start(), -len(name), canonical, cls_name)
+            if best is None or key < best:
+                best = key
+        return (best[2], best[3]) if best else (None, "other")
 
     def drug_regex(self) -> str:
         names = sorted({n for n in self.all_names()}, key=len, reverse=True)

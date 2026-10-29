@@ -1,95 +1,81 @@
 # Pre-Op Triage Take-Home
 
-## Objective
+Deterministic, grounded triage for pre-op scheduling. The model (optionally)
+locates text; code makes every decision. See `WRITEUP.md` for the approach and
+`docs/superpowers/specs/` for the design spec.
 
-Implement `triage_submission(...)` in `core.py` - it is a pre-op triage function for a single submission package. It is currently a naive LLM-based solution that makes a real model API call. The starter implementation intentionally does not follow some best practices in using the OpenAI API. You may use whatever file structure makes sense for your solution.
-
-Your output must match this schema:
-
-- `decision`: `READY | NEEDS_FOLLOW_UP | NOT_CLEARED`
-- `issues[]`: `category` + evidence (how you design this is up to you)
-- `explanation`
-
-## What Is Provided
-
-- `data/patients_sample_50.jsonl` includes:
-  - `case_id`
-  - `submission`
-  - `label` (what a human labeled this case as)
-- `run_baseline.py` runs your `triage_submission` implementation and writes outputs.
-- `run_evals.py` scores outputs against provided `label` and can run determinism checks.
-
-## Completion
-
-Note: this exercise is evaluated on engineering judgment. You may not reach a 100% score, and that is OK! We are looking to understand how you approached the problem and designed a working solution.
-
-## Setup
-
-1. Confirm `uv` is installed.
+## Quick start
 
 ```bash
-uv --version
+uv --version          # uv is the only prerequisite
+make test             # 160+ unit and integration tests, no API key needed
+make baseline evals score   # runs the 50 sample cases offline and scores them
+make report           # interactive TUI over the eval report
 ```
 
-2. Set your OpenAI API key.
+No API key is needed for the default `rules` extractor. To exercise the model
+extractor:
 
 ```bash
-export OPENAI_API_KEY="<your_api_key>"
+export ANTHROPIC_API_KEY="<your key>"
+make baseline evals EXTRACTOR=claude   # or EXTRACTOR=union
+make determinism EXTRACTOR=claude CACHE_FLAG=--no-cache   # replay the model 10x on one case
 ```
 
-## Recommended Workflow
+Model responses are cached under `data/cache/extractions/` keyed by document
+hash, prompt version, and model, so repeated runs are free and byte-identical.
 
-1. Implement `triage_submission` in `core.py`.
-2. Run baseline outputs:
+## Layout
 
-```bash
-make baseline
+```
+core.py                 triage_submission(submission, *, model, extractor="rules") entry point
+preop_triage/
+  ingest.py             structured JSON -> Facts
+  extract/rules.py      regex span extractor (offline)
+  extract/claude.py     Claude span extractor (cached)
+  extract/union.py      both, with origin tags
+  ground.py             verbatim-quote gate
+  parsers.py            BP, temperature (exact C->F), time, date parsers
+  classify.py           pattern-table classifier, doc-kind and procedure matching
+  facts.py              grounded spans -> Facts | ReviewFlags
+  engine.py             policy rules R0-R4, recency, precedence
+  invariants.py         output assertions; demotes to NEEDS_FOLLOW_UP on violation
+  pipeline.py           orchestrator
+config/policy.yaml      every number, drug table, and phrase pattern
+run_baseline.py         runs the pipeline over a JSONL (flags: --extractor, --no-cache, --policy)
+run_evals.py            local scoring: schema, decision, category set, per-category P/R, confusion, diff
+view_report.py          TUI (unchanged from the starter)
+tests/                  parsers, grounding, classification, ingestion, engine, invariants, pipeline, evals
 ```
 
-3. Run eval scoring:
+## Output
 
-```bash
-make evals
+```json
+{
+  "decision": "NOT_CLEARED",
+  "issues": [{
+    "category": "ACUTE_SAFETY_EXCLUSION", "rule_id": "R4", "status": "BP_EXCLUSION",
+    "summary": "Most recent blood pressure 157/117 mmHg on 2026-03-03 meets the exclusion threshold (diastolic >= 110).",
+    "evidence": [{"source": "documents:7aef...", "doc_id": "7aef...", "date": "2026-03-03", "author": "Jasmine O. Nguyen, BSN, RN", "quote": "BP 157/117"}],
+    "computed": {"observed_date": "2026-03-03T09:05:00", "observed_value": "157/117 mmHg", "threshold": "diastolic >= 110"},
+    "action_needed": "Hold scheduling; recheck blood pressure and document a within-range reading."
+  }],
+  "explanation": "NOT_CLEARED. Not satisfied: R4 fail (Acute safety exclusion present). Satisfied: R0, R1.1, R1.2, R2. Not applicable: R3.",
+  "checks": ["... one entry per rule with PASS/FAIL/SKIPPED/UNVERIFIED and evidence ..."],
+  "review_flags": [], "assumptions": [], "rejections": [],
+  "provenance": {"policy_version": "2026-01-01", "extractor": "rules", "pipeline_version": "0.1.0"}
+}
 ```
 
-4. Run determinism check:
+## Scoring
 
-```bash
-make determinism
-```
+Unchanged from the starter: JSON validity, exact decision match, exact
+issue-category set match, equally weighted. `run_evals.py` now scores locally
+(no hosted evals round trip) and adds per-category precision/recall, a decision
+confusion matrix, and a diff against the previous report.
 
-5. Print score:
+## Data
 
-```bash
-make score
-```
-
-6. View the interactive report (TUI):
-
-```bash
-make report
-```
-
-This opens a terminal UI (`view_report.py`) that shows per-case results side-by-side with oracle expectations. You can browse records, see metric pass/fail status, and inspect submission data. Press `f` on a metric row to filter the case list to failures. Press `q` to quit.
-
-## Tests
-
-Run the unit tests with:
-
-```bash
-make test
-```
-
-## Outputs
-
-- Baseline outputs: `data/baseline_outputs.jsonl`
-- Eval report: `data/eval_report.json`
-- Determinism report: `data/determinism_report.json`
-
-## Configurable Variables
-
-- `MODEL` (default `gpt-4.1-mini`)
-- `INPUT` (default `data/patients_sample_50.jsonl`)
-- `OUTPUT` (default `data/baseline_outputs.jsonl`)
-- `REPORT` (default `data/eval_report.json`)
-- `DETERMINISM_REPORT` (default `data/determinism_report.json`)
+- `data/patients_sample_50.jsonl`: `case_id`, `submission`, `label`
+- `data/baseline_outputs.jsonl`, `data/eval_report.json`,
+  `data/determinism_report.json`: generated

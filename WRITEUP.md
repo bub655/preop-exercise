@@ -175,7 +175,7 @@ distinguish the two.
 | rules     | 50 sample cases | 50/50 | 50/50 | 100% | 10 runs byte-identical |
 | rules     | synthetic held-out, 5 seeds | 2000/2000 | 2000/2000 | 100% | n/a |
 | rules     | 10 hand-written held-out | 10/10 | 10/10 | 100% | n/a |
-| claude    | 50 sample cases | 50/50 | 50/50 | 100% | 10 no-cache runs: decision 100%, exact bytes 50% (see below) |
+| claude    | 50 sample cases | 50/50 | 50/50 | 100% | 10 no-cache runs: decision-bearing output 10/10 identical, full bytes 4/10 |
 | claude    | 10 hand-written held-out | 10/10 | 10/10 | 100% | n/a |
 | union     | 50 sample cases | 50/50 | 50/50 | 100% | from cache |
 | union     | 10 hand-written held-out | 10/10 | 10/10 | 100% | from cache |
@@ -191,19 +191,17 @@ input tokens each. Three observations matter more than the scores:
   pattern tables do not recognize, such as a note's title line or "Proposed
   procedure: ...". Those are shown to the reviewer and change nothing, which is
   the designed behavior for model-only spans on a set the rules already cover.
-- **What "exact bytes 50%" means.** On ten fresh no-cache replays of one case,
-  the decision, issues, checks, and assumptions were byte-identical every time.
-  Two sources of variation were found and one was removed. First, the model's
-  quote boundaries for a vital sign varied ("ADDENDUM 08:30: Re-measured
-  137/78 mmHg" one run, "Re-measured 137/78 mmHg" the next); evidence for blood
-  pressure and temperature is now normalized to the containing line before it
-  is emitted, so the same reading always yields the same evidence. Second, the
-  advisory review flags vary: on some runs the model also quotes a note heading
-  such as "PRE-OP NURSING ASSESSMENT" as a span the tables do not recognize,
-  and the resulting non-blocking flag appears or not. These flags are model
-  commentary for the reviewer and never touch the decision; whether they belong
-  in the byte-identity contract is a product decision, not a correctness one.
-  With the cache on, repeat runs are byte-identical in full.
+- **Two determinism numbers.** The harness reports both. *Decision-bearing
+  match* covers decision, issues, checks with their evidence, assumptions,
+  rejections, and blocking flags: 10 of 10 cold no-cache replays identical.
+  *Full-bytes match* covers everything: 4 of 10. They differ only because
+  advisory review flags vary run to run, when the model also quotes a span the
+  tables do not recognize, such as the heading "PRE-OP NURSING ASSESSMENT", and
+  that non-blocking flag appears or does not. The advisory flags stay in the
+  output on purpose, so the nurse sees what the model pointed at. Blood pressure
+  and temperature evidence is normalized to its containing line, so the model's
+  quote boundaries no longer affect the decision-bearing output. With the cache
+  on, repeat runs are byte-identical in full.
 
 On these two sets the model adds no correct decisions the rules did not
 already reach, which is expected: the tables were grown against them. Its

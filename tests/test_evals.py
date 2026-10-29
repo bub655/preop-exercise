@@ -53,3 +53,35 @@ def test_diff_vs_previous_lists_regressions_and_fixes() -> None:
     cur = score([_case(0, "READY", []), _case(1, "READY", [])], {0: _out("NEEDS_FOLLOW_UP", []), 1: _out("READY", [])})
     d = diff_reports(prev, cur)
     assert d["regressions"] == ["c0"] and d["fixes"] == ["c1"]
+
+
+def test_decision_bearing_canonical_ignores_advisory_flags_only() -> None:
+    from run_evals import decision_bearing_canonical, full_canonical
+
+    base = {"decision": "READY", "issues": [], "explanation": "x", "checks": [], "assumptions": [], "rejections": [], "provenance": {"cache_hits": 0},
+            "review_flags": [{"reason": "NO_PATTERN_MATCH", "blocking": False, "quote": "PRE-OP NURSING ASSESSMENT"}]}
+    other = dict(base, review_flags=[])
+    assert full_canonical(base) != full_canonical(other)
+    assert decision_bearing_canonical(base) == decision_bearing_canonical(other)
+    blocking = dict(base, review_flags=[{"reason": "MODEL_CODE_DISAGREE", "blocking": True, "quote": "x"}])
+    assert decision_bearing_canonical(blocking) != decision_bearing_canonical(other)
+
+
+def test_determinism_report_carries_both_metrics(monkeypatch) -> None:
+    import run_evals
+    from types import SimpleNamespace
+
+    outputs = iter([
+        {"decision": "READY", "issues": [], "review_flags": [{"reason": "NO_PATTERN_MATCH", "blocking": False, "quote": "a"}]},
+        {"decision": "READY", "issues": [], "review_flags": []},
+    ])
+
+    class Fake:
+        def __init__(self, d): self.d = d; self.decision = d["decision"]
+        def model_dump(self, mode="json"): return self.d
+
+    monkeypatch.setattr(run_evals, "triage_submission", lambda *a, **k: Fake(next(outputs)))
+    monkeypatch.setattr(run_evals, "load_cases", lambda p: [run_evals.EvalCase(case_id="c", submission={}, label=run_evals.CaseLabel(decision="READY", categories=[]))])
+    args = SimpleNamespace(input="x", record_index=0, runs=2, model="m", extractor="rules", no_cache=True)
+    rep = run_evals.run_determinism_mode(args)
+    assert rep["exact_output_match_pct"] == 50.0 and rep["decision_bearing_match_pct"] == 100.0

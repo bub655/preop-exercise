@@ -240,6 +240,23 @@ def run_eval_mode(args: argparse.Namespace) -> dict[str, Any]:
     return report
 
 
+def full_canonical(output: dict[str, Any]) -> str:
+    """Every byte of the output."""
+    return json.dumps(output, sort_keys=True, separators=(",", ":"))
+
+
+def decision_bearing_canonical(output: dict[str, Any]) -> str:
+    """The output minus advisory (non-blocking) review flags.
+
+    Advisory flags are model commentary for the reviewer: spans the model pointed at that the
+    pattern tables do not recognize. They never touch the decision, and which ones a model
+    emits can vary run to run. This view measures stability of everything that does.
+    """
+    trimmed = dict(output)
+    trimmed["review_flags"] = [f for f in output.get("review_flags", []) if f.get("blocking", True)]
+    return json.dumps(trimmed, sort_keys=True, separators=(",", ":"))
+
+
 def run_determinism_mode(args: argparse.Namespace) -> dict[str, Any]:
     cases = load_cases(Path(args.input))
     if not cases:
@@ -251,21 +268,25 @@ def run_determinism_mode(args: argparse.Namespace) -> dict[str, Any]:
     run_rows: list[dict[str, Any]] = []
     decisions: list[str] = []
     canonical_outputs: list[str] = []
+    decision_bearing_outputs: list[str] = []
     for run_index in range(args.runs):
         started = time.perf_counter()
         try:
             output = triage_submission(case.submission, model=args.model, extractor=args.extractor, use_cache=not args.no_cache)
             decision = output.decision
-            canonical = json.dumps(output.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+            dumped = output.model_dump(mode="json")
+            canonical, bearing = full_canonical(dumped), decision_bearing_canonical(dumped)
             valid, error = True, None
         except Exception as exc:  # network/runtime failure path
-            decision, canonical, valid, error = "INVALID", "INVALID", False, str(exc)
+            decision, canonical, bearing, valid, error = "INVALID", "INVALID", "INVALID", False, str(exc)
         run_rows.append({"run_index": run_index, "decision": decision, "json_schema_valid": valid, "error": error, "seconds": round(time.perf_counter() - started, 3)})
         decisions.append(decision)
         canonical_outputs.append(canonical)
+        decision_bearing_outputs.append(bearing)
 
     decision_counts = Counter(decisions)
     canonical_counts = Counter(canonical_outputs)
+    bearing_counts = Counter(decision_bearing_outputs)
     return {
         "generated_at": datetime.now(tz=UTC).isoformat(),
         "mode": "determinism",
@@ -278,6 +299,7 @@ def run_determinism_mode(args: argparse.Namespace) -> dict[str, Any]:
         "decision_stability_pct": round(100.0 * max(decision_counts.values()) / args.runs, 2),
         "json_format_stability_pct": round(100.0 * sum(1 for r in run_rows if r["json_schema_valid"]) / args.runs, 2),
         "exact_output_match_pct": round(100.0 * max(canonical_counts.values()) / args.runs, 2),
+        "decision_bearing_match_pct": round(100.0 * max(bearing_counts.values()) / args.runs, 2),
         "decision_counts": dict(decision_counts),
         "run_rows": run_rows,
     }
@@ -300,7 +322,7 @@ def main() -> None:
         if diff:
             print(f"  vs previous {diff['previous_score_pct']}% -> {diff['current_score_pct']}%  regressions={diff['regressions']} fixes={diff['fixes']}")
     else:
-        print(f"decision_stability={report['decision_stability_pct']}% exact_output_match={report['exact_output_match_pct']}%")
+        print(f"decision_stability={report['decision_stability_pct']}% exact_output_match={report['exact_output_match_pct']}% decision_bearing_match={report['decision_bearing_match_pct']}%")
 
 
 if __name__ == "__main__":

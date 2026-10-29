@@ -1,242 +1,136 @@
-# Pre-Op Scheduling Triage: Approach and Design Decisions
+# Pre-op triage: write-up
 
-## The one-sentence version
+## How to run
 
-The model never produces a value that a decision depends on. It only points at
-text. Code confirms the text exists, parses it, classifies it, applies the
-policy, and checks its own output before anything leaves the pipeline. Whatever
-code cannot verify fails closed to `NEEDS_FOLLOW_UP` with a review flag.
-
-## Why not improve the single-call baseline?
-
-The starter sends the whole package to a model and asks for a decision. Three
-reasons that is the wrong shape here:
-
-1. **The deciding facts are arithmetic and recency.** Thirty days passes and
-   thirty-one fails. A diastolic of 110 excludes. 37.9 C is fine and 38.6 C is a
-   fever. An 08:30 addendum overrides 08:06. Models are unreliable at exactly
-   these things.
-2. **A paraphrased quote is not evidence.** The nurse has to find the sentence.
-   A reworded or invented quote erodes trust in every other packet.
-3. **Determinism.** "Usually stable" is not a property a policy can rely on.
-
-## Architecture
+Everything runs offline by default. `uv` is the only prerequisite.
 
 ```
-submission JSON
-   v
-[1] ingest        structured fields -> Facts                (pure Python)
-[2] extract       documents -> Spans                        (rules, or Claude, cached)
-[3] ground        Spans -> grounded Spans + Rejections      (verbatim match in the document)
-[4] parse/classify grounded Spans -> Facts | ReviewFlags    (regex parsers, pattern tables)
-[5] engine        Facts -> decision, issues, checks         (policy config, recency, precedence)
-[6] invariants    output -> output | SYSTEM_ERROR           (assertions on the result itself)
+make test                     # 332 tests
+make baseline evals score     # 50 sample cases
+make baseline evals INPUT=data/heldout_cases.jsonl OUTPUT=data/heldout_outputs.jsonl REPORT=data/heldout_report.json
+make synth                    # 500 generated cases, reports fail-open / fail-closed
+make determinism              # replays one case 10x
 ```
 
-A `Span` is untrusted: a kind, a document id, a quote. A `Fact` is trusted: a
-value code derived from a structured field or a grounded quote, with source,
-timestamp, and parser attached. Only Facts reach the engine.
+To use the model path, set `ANTHROPIC_API_KEY` and add `EXTRACTOR=claude` (or
+`union`) to the baseline/determinism targets. Model calls are cached under
+`data/cache/`, so a second run is free. The `triage_submission` entry point in
+`core.py` keeps the starter's signature.
 
-### The five gates
+## What I built
 
-1. **Grounding.** The quote must appear verbatim in the document; whitespace is
-   the only tolerance. Quotes over 400 characters are rejected. A rejected span
-   is recorded, never repaired.
-2. **Parsing.** Values come only from the grounded quote through deterministic
-   parsers and a closed drug table. Celsius conversion is exact rational
-   arithmetic, so 38.0 C is exactly 100.4 F. A parse failure is a flag, not a
-   guess.
-3. **Classification.** For semantic kinds, code labels the quote against pattern
-   tables in `config/policy.yaml` and compares with any model-suggested label.
-   Disagreement or no match is a flag.
-4. **Consistency.** Structured and free-text vitals merge into one timeline and
-   the latest reading on or before review time wins. A drug reported in a note
-   but absent from the list is active, recorded as an assumption. Mentions
-   resolve by recency.
-5. **Output invariants.** No `READY` with issues, blocking flags, or unverified
-   or skipped checks; `NOT_CLEARED` only when backed by a grounded reading over
-   the threshold; every evidence quote re-grounds; every category matches its
-   rule; the output serializes identically twice. A violation demotes to
-   `NEEDS_FOLLOW_UP` with `SYSTEM_ERROR`. Nothing past extraction raises.
+The baseline sends the whole package to a model and asks for a decision. I
+didn't want to improve that, I wanted to get rid of it. Almost everything that
+decides a case here is arithmetic or recency: is the H&P 30 or 31 days old, is
+the diastolic 109 or 110, is the 08:30 recheck later than the 08:06 reading,
+does 37.9 C convert to something over 100.4 F. A language model is the wrong
+tool for that, and a nurse who has to verify every non-READY case can't do
+anything with a paraphrased "evidence" string.
 
-### Where the model is left
+So the model has exactly one job: point at text. For each document it returns
+spans, each a kind from a fixed list and a verbatim quote. Everything after
+that is code:
 
-One job: for each document, emit candidate spans with a kind and a verbatim
-quote, through a strict JSON schema. If it misses a span the engine fails
-closed. If it invents one, grounding removes it. If it mislabels one,
-classification catches it.
+- Grounding checks the quote actually exists in the document. If not, it's
+  dropped and logged. The model can't invent evidence.
+- Parsers turn the quote into a value (BP, temperature with unit handling,
+  dates, times). Temperature conversion uses exact rational arithmetic so 38.0 C
+  is 100.4 F and not 100.3999.
+- A classifier labels semantic quotes (signed vs unsigned, specific hold vs
+  vague) against pattern tables in `config/policy.yaml`. If the model also
+  suggested a label and it disagrees with the code's label, that's a flag.
+- The engine applies the four rules from the policy appendix, with every
+  number coming from the config file.
+- An invariant gate checks the output itself before it leaves: no READY with
+  issues, NOT_CLEARED only when backed by a reading that actually crosses the
+  threshold, every evidence quote re-grounds. If anything fails, the case is
+  demoted to NEEDS_FOLLOW_UP with a SYSTEM_ERROR flag.
 
-Three extractors share everything downstream, chosen with `--extractor`:
-`rules` (regex over the same pattern tables, offline, the recall floor),
-`claude` (`claude-opus-5-5`, effort medium, cached by document hash, prompt
-version, and model; any API failure becomes a blocking `EXTRACTOR_ERROR` so an
-unread document can never produce `READY`), and `union` (both, each span tagged
-by origin).
+Anything the code can't verify fails closed. That's the whole design.
 
-For semantic kinds the rules already find every phrasing the tables recognize,
-so a model span the tables do not recognize carries no verified information.
-Those become **advisory** review flags: shown to the reviewer, never a scored
-issue. A model label that contradicts the code's label is blocking, because
-that is a real conflict.
-
-### Policy as data
-
-Windows, thresholds, required tests by risk, the lab-code map, the drug tables,
-the procedure-noun table, and every phrase pattern live in `config/policy.yaml`.
-The engine contains no clinical numbers.
-
-## Generalization: a held-out synthetic set
-
-The pattern tables were first built against the 50 sample cases, so a score on
-those cases says nothing about generalization. The repo includes a synthetic
-generator (`preop_triage/synth.py`, `make synth`) whose phrasing banks were
-written from general clinical documentation rather than copied from the sample:
-H&P title variants, signed and unsigned consent phrasings, hold, restart, and
-continue phrasings, ten blood-pressure layouts, Celsius and unit-less
-temperatures, structured `value_c` vitals and type aliases, CPT and display-name
-lab codes, unlisted procedures with laterality, and unknown risk strings.
-Ground truth comes from the scenario parameters, never from the engine.
-
-Errors are split into **fail-open** (something cleared that should not have
-been; must be zero) and **fail-closed** (a follow-up that was not needed; the
-recall cost).
-
-| Run | Cases | Fully correct | Fail-open | Fail-closed |
-|-----|------:|--------------:|----------:|------------:|
-| Tables tuned on the sample only | 400 | 24% | 30% | 46% |
-| After broadening, 5 seeds | 2000 | 100% | 0% | 0% |
-
-The generator and the tables have the same author, so 100% is a lower bound.
-What matters is that an unanticipated phrasing fails closed and becomes a test.
+There's also a regex extractor that uses the same pattern tables, so the full
+pipeline runs with no API key. It turned out to be enough for the sample data.
+The model extractor exists for phrasings the regexes don't know; a span it
+finds still has to pass every gate above.
 
 ## Results
 
-| Extractor | Set | Decision match | Category set match | Determinism |
-|-----------|-----|---------------:|-------------------:|-------------|
-| rules  | 50 sample cases | 50/50 | 50/50 | 10 replays byte-identical |
-| rules  | synthetic held-out, 5 seeds | 2000/2000 | 2000/2000 | n/a |
-| rules  | 10 hand-written held-out | 10/10 | 10/10 | n/a |
-| claude | 50 sample cases | 50/50 | 50/50 | 10 cold replays: decision-bearing 10/10, full bytes 4/10 |
-| claude | 10 hand-written held-out | 10/10 | 10/10 | n/a |
-| union  | 50 sample cases | 50/50 | 50/50 | byte-identical from cache |
-| union  | 10 hand-written held-out | 10/10 | 10/10 | byte-identical from cache |
+| extractor | set | decision | categories |
+|---|---|---|---|
+| rules | 50 sample cases | 50/50 | 50/50 |
+| rules | 2000 generated cases (5 seeds) | 2000/2000 | 2000/2000 |
+| rules | 10 hand-written held-out cases | 10/10 | 10/10 |
+| claude | 50 sample cases | 50/50 | 50/50 |
+| claude | 10 held-out cases | 10/10 | 10/10 |
 
-**Two determinism numbers.** The harness reports both. Decision-bearing match
-covers decision, issues, checks with evidence, assumptions, rejections, and
-blocking flags. Full-bytes match covers everything. They differ only because
-advisory flags vary between cold runs: sometimes the model also quotes a
-heading such as "PRE-OP NURSING ASSESSMENT" and that non-blocking flag appears
-or does not. The advisory flags stay in the output so the nurse sees what the
-model pointed at. Blood pressure and temperature evidence is normalized to its
-containing line, so the model's quote boundaries no longer affect the
-decision-bearing output.
+Determinism: the rules path is byte-identical across 10 replays. The model
+path, run cold with no cache 10 times on one case, gave identical decisions,
+issues, checks and assumptions every time, and identical full output 4 times
+out of 10. The difference is advisory flags, where the model sometimes also
+quotes a note heading the tables don't recognize. Those flags never affect the
+decision and I left them in so the reviewer can see what the model pointed at.
+The harness reports both numbers.
 
-**What the model run showed.** About 290 documents, one call each, roughly 3
-seconds and 1,500 input tokens per call. Zero rejected spans: the model never
-returned a quote that failed to ground. 115 advisory flags and no blocking
-ones. Union changed no decision versus rules on either set, which is expected
-because the tables were grown against them. The model's value is on inputs
-neither author anticipated, where rules fail closed and the model can still
-locate the span for code to verify.
+The model never produced a quote that failed to ground, across about 290
+documents. It also didn't change a single decision versus the regex extractor
+on these sets, which is what I'd expect since the pattern tables were grown on
+them.
 
-## The evidence packet
+## Overfitting
 
-Each issue carries `category`, `rule_id`, a `status` such as `OUTDATED` or
-`STALE_PLAN`, a one-sentence summary, `evidence[]` with a JSON path or document
-id and the exact quote, a `computed` block with the dates, day counts, window,
-threshold, and unit conversion, and `action_needed`. Each result also carries
-`checks[]` for every rule so READY cases are auditable, `assumptions[]` for
-every judgment and the text it rests on, `review_flags[]`, `rejections[]`, and
-`provenance`.
+The 100% on the sample is not a useful number by itself. The pattern tables
+were built against those 50 cases. So I wrote a generator (`preop_triage/synth.py`)
+with phrasing banks that deliberately don't copy the sample: different H&P
+titles, different consent wording, BP as `SBP 182, DBP 96`, Celsius and unit-less
+temps, structured vitals typed `bp`/`temp` with `value_c`, CPT lab codes,
+procedures not in my noun list, and so on. Ground truth comes from how each case
+was generated, not from the engine.
 
-## Stated assumptions
+The first run was bad: 24% fully correct, 30% fail-open. Two of the fail-open
+causes were real bugs the sample could never have shown: structured vitals with
+a type other than `blood_pressure`/`temperature` were silently dropped, and the
+invariant gate mis-resolved one evidence path. After fixing those and widening
+the tables (cue plus negation instead of enumerated sentences), five seeds come
+back clean. I wrote both the generator and the tables, so that's a lower bound,
+not proof. The point is that an unanticipated phrasing fails closed and becomes
+a test.
 
-Four of these were decisions made on review of the held-out cases.
+## Decisions I made
 
-- **Inclusive windows.** Thirty days passes; thirty-one fails. Fourteen passes
-  for high risk; fifteen fails.
-- **Continue plans.** A plan that continues the anticoagulant satisfies Rule 3
-  when the sentence says so perioperatively ("through surgery", "without
-  interruption", "before or after"), because an uninterrupted drug is managed
-  before and after. A bare "continue apixaban" is vague and stays an incomplete
-  plan. The instruction is recorded as an assumption.
-- **Proxy signatures.** A consent signed by a legal guardian or healthcare proxy
-  on behalf of the patient counts as signed. Whether the signer had authority is
-  the surgical team's call, so who signed is recorded as an assumption.
-- **Unit-less temperatures.** A labeled reading with no unit ("Temp 38.7") is
-  read from its value range, 30 to 45 as Celsius and 85 to 115 as Fahrenheit,
-  and the inference is recorded. A bare "92 F" with no label, degree sign, or
-  decimal is not a temperature.
+The policy leaves some things open. These came up in the held-out cases and I
+decided them rather than leaving them to the pattern tables:
 
-The rest:
+- Windows are inclusive. 30 days passes, 31 fails.
+- A plan that says to continue the anticoagulant through surgery without
+  interruption satisfies Rule 3. The policy asks how the drug is managed before
+  and after, and "not interrupted" answers both. A bare "continue apixaban" is
+  vague and stays an incomplete plan. The instruction is recorded as an
+  assumption in the output.
+- A consent signed by a legal guardian or healthcare proxy on behalf of the
+  patient counts as signed. Whether they had authority is the surgical team's
+  call, not the triage system's. Who signed is recorded as an assumption.
+- A labeled temperature with no unit ("Temp 38.7") is read from its range and
+  the inference is recorded. A bare "92 F" with no label is not a temperature;
+  it's more likely an age.
 
-- Review time is `submission_received_at`; later readings are ignored and
-  recorded. "See flowsheet" and "vitals deferred" are not readings.
-- A patient-reported anticoagulant counts as active. An unknown status is
-  `MISSING_REQUIRED_DATA`, and the anticoagulation rule is skipped.
-- A medication mention counts as "taking" only when anchored to a reporting
-  verb or a status phrase; a bare "takes X" would also match "no longer takes X".
-- A hold or restart is specific only when its timing is in the same sentence. A
-  period ends a sentence except between two digits, so "2.5 mg" stays inside.
-- Any signed, matching consent satisfies the rule regardless of earlier unsigned
-  forms. Laterality is compared when both sides state a side.
-- Wellness and establish-care notes titled "H&P" do not satisfy the H&P rule.
-- Missing or unverifiable vitals are `MISSING_REQUIRED_DATA`, never an exclusion.
-- Same-timestamp ties go to the structured reading, else to the reading later
-  in the document, recorded when values differ.
-- Malformed input is triaged, not rejected: each bad field is flagged and the
-  result fails closed.
+Every assumption the engine makes shows up in the output under `assumptions`,
+with the quote it rests on.
 
-## What I changed after reviewing the generated code
+## Things I left alone
 
-Three sources found problems after the first complete build.
+The lab-code map and the procedure-noun table are both finite lists. An
+unknown lab code fails closed as a missing test; a consent whose wording the
+noun list and word-overlap fallback don't cover comes back UNVERIFIED. I could
+keep adding regexes for every code and every word order but that's the wrong
+direction. Reading an unfamiliar lab display name or deciding that two phrasings
+name the same operation is what the model extractor is for, with code still
+verifying the quote. Two spellings in the sample itself fall in this bucket:
+"Proposed procedure:" and "HISTORY & PHYSICAL - PRE-OP". The model located both
+and classification rejected them because the tables list neither.
 
-**A fresh-context code review** reproduced four fail-open paths that ended in
-`READY`: a silent model-extractor failure masking a 192/114 blood pressure,
-blank or negated consent signatures matching the "signed" pattern, a vague
-restart rescued by an unrelated "48 hours" later on the line, and "92 F" in an
-age/sex token masking a 101.8 F fever. All four are fixed with regression tests
-in `tests/test_review_fixes.py`.
+## What I'd do next
 
-**The synthetic set** found two more fail-open bugs the sample could not:
-structured vitals typed `bp` or `temp`, or carrying `value_c`, were dropped
-silently, so an exclusion-level reading could vanish; and the invariant gate
-treated flag evidence as a JSON path and did not recognize structured Celsius
-exclusions, so it demoted correct `NOT_CLEARED` results. Both are fixed, and an
-unrecognized vital type is now a flag.
-
-**The hand-written held-out set** found no fail-open. It found three
-fail-closed misses, each a judgment the policy text left open, and each became
-one of the decisions above: a continue-through-surgery plan, a guardian-signed
-consent, and a decimal dose read as a sentence boundary. Fixing the first two
-meant adding what the policy allows; fixing the third was one helper in the
-pattern compiler.
-
-## What the starter did that this fixes
-
-New client per call, no retries, sorted-key JSON that scrambles document order,
-a non-strict schema, no caching, evidence as free text, and an eval script that
-round-trips through a hosted evals API. All replaced.
-
-## Trade-offs and what I would do next
-
-- **Recall depends on the pattern tables.** A phrasing the tables do not cover
-  becomes a review flag instead of a fact. That is the right trade here, and
-  the Claude extractor exists to find spans the rules miss.
-- **Known limit, not patched: the lab-code map.** It covers common aliases, CPT
-  codes, and display-name patterns; an unmapped code fails closed as a missing
-  test, because enumerating every lab system's codes in regex is the wrong
-  direction and reading an unfamiliar code from its display text is what the
-  model extractor is for.
-- **Known limit, not patched: the procedure-noun table.** A consent whose
-  wording differs from the schedule in a way the noun list and the content-word
-  fallback do not cover is `UNVERIFIED`, because patching word orders one regex
-  at a time does not generalize and judging that two phrasings name one
-  operation belongs to the model, with code verifying the quote.
-- **Known limit, not patched: two spellings on the sample.** "Proposed
-  procedure:" and "HISTORY & PHYSICAL - PRE-OP" account for 50 of the 115
-  advisory flags; the model located them correctly and classification rejected
-  them because the tables list neither spelling.
-- **Next:** run `union` on a larger labeled set and mine `review_flags` to
-  grow the tables from real phrasings; add golden extraction fixtures; surface
-  `checks[]` and `assumptions[]` in the TUI.
+Run the union extractor on a bigger labeled set and mine the advisory flags for
+real phrasings to add. Add golden extraction fixtures so the model path is
+tested offline. Show the per-rule checks and assumptions in the TUI, since
+that's what a nurse would actually read.

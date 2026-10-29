@@ -73,6 +73,19 @@ class Fact:
     doc_id: str | None = None
     quote: str | None = None
     parser: str = "structured"
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Doc:
+    """One document from the package, as the pipeline sees it."""
+
+    doc_id: str
+    title: str | None
+    date: str | None
+    author: str | None
+    text: str | None
+    index: int
 
 
 @dataclass(frozen=True)

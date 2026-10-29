@@ -24,7 +24,7 @@ _TEMP_SPAN_RE = re.compile(
 _SENTENCE_SPLIT = re.compile(r"(?<=[.;])\s+(?=[A-Z])")
 
 # Kinds whose quote is the containing sentence rather than the bare match.
-SENTENCE_KINDS = {SpanKind.ANTICOAG_HOLD, SpanKind.ANTICOAG_RESUME, SpanKind.ANTICOAG_DEFERRED, SpanKind.MED_MENTION}
+SENTENCE_KINDS = {SpanKind.ANTICOAG_HOLD, SpanKind.ANTICOAG_RESUME, SpanKind.ANTICOAG_DEFERRED}
 
 
 def _line_bounds(text: str, pos: int) -> tuple[int, int]:

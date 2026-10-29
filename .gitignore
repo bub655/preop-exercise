@@ -37,3 +37,6 @@ uv.lock
 # Extraction cache (model responses keyed by document hash)
 data/cache/
 data/synth_report.json
+
+# Design-process notes kept locally only
+docs/superpowers/

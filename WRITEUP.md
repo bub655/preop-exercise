@@ -274,6 +274,18 @@ the eval script round-tripping through a hosted evals API. All replaced.
   this setting, and the write-up says so plainly. The Claude extractor exists
   to find spans the rules miss; a span it finds still has to pass the same
   gates, so the pattern tables remain the ceiling on what counts.
+- **Known limit: the lab-code map.** It covers common aliases, CPT codes, and
+  display-name patterns, and nothing more; an unmapped code fails closed as a
+  missing test rather than being guessed, because enumerating every lab
+  system's codes in regex is the wrong direction and resolving an unfamiliar
+  code from its display text is exactly the kind of reading the model extractor
+  is for.
+- **Known limit: the procedure-noun table.** Consent matching knows a fixed
+  noun list plus a shared-content-word fallback, so a consent whose wording
+  differs from the schedule in a way neither covers is `UNVERIFIED` rather than
+  matched, because patching word orders one regex at a time does not generalize
+  and judging that two phrasings name the same operation belongs to the model
+  extractor, with code still verifying the quote it points at.
 - **Next:** run the `union` extractor on a larger labeled set and mine the
   `rejections` and `review_flags` to grow the pattern tables from real
   phrasings; add golden extraction fixtures so the model path is tested

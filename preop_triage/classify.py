@@ -95,4 +95,20 @@ def procedure_matches(scheduled: str | None, consent_line: str | None, policy: P
     b = _nouns_in(consent_line, policy)
     if not a or not b:
         return None
-    return a == b
+    if a != b:
+        return False
+    side_a, side_b = _laterality(scheduled), _laterality(consent_line)
+    if side_a and side_b and side_a != side_b:
+        return False
+    return True
+
+
+_SIDES = ("bilateral", "left", "right")
+
+
+def _laterality(text: str) -> str | None:
+    lowered = text.lower()
+    for side in _SIDES:
+        if re.search(rf"\b{side}\b", lowered):
+            return side
+    return None

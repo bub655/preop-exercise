@@ -3,8 +3,8 @@
 It returns candidate spans with a kind from a closed enum and an optional
 label suggestion. It never returns parsed values. Every span it emits still
 has to survive grounding, parsing, classification, and the policy engine.
-Any failure yields zero spans for the document and sets `last_error`; the
-pipeline then fails closed for that document.
+Any failure raises ExtractorError (and records `last_error`); the pipeline
+turns that into a blocking EXTRACTOR_ERROR review flag for the document.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ import anthropic
 from ..classify import GROUP_FOR_KIND
 from ..model import Span, SpanKind
 from ..policy import Policy
+from .base import ExtractorError
 from .cache import ExtractionCache
 
 PROMPT_VERSION = "1"
@@ -151,16 +152,16 @@ class ClaudeSpanExtractor:
                 raise ValueError("response missing 'spans' list")
         except anthropic.RateLimitError as exc:
             self.last_error = f"rate limited: {exc}"
-            return []
+            raise ExtractorError(self.last_error) from exc
         except anthropic.APIStatusError as exc:
             self.last_error = f"api status {exc.status_code}: {exc.message}"
-            return []
+            raise ExtractorError(self.last_error) from exc
         except anthropic.APIConnectionError as exc:
             self.last_error = f"connection error: {exc}"
-            return []
+            raise ExtractorError(self.last_error) from exc
         except (ValueError, RuntimeError, StopIteration) as exc:
             self.last_error = f"unusable response: {exc}"
-            return []
+            raise ExtractorError(self.last_error) from exc
         if self.cache is not None:
             self.cache.put(key, raw)
         return self._to_spans(doc_id, raw)

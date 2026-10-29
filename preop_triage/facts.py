@@ -38,6 +38,7 @@ _TIME_RE = re.compile(r"\b(\d{1,2}):(\d{2})\b")
 
 
 def _observed_at(doc: Doc, span: Span) -> datetime | None:
+    """Document date plus the nearest HH:MM on the reading's line: preceding first, else following."""
     base = parse_iso(doc.date)
     if base is None:
         return None
@@ -45,23 +46,38 @@ def _observed_at(doc: Doc, span: Span) -> datetime | None:
     t = None
     if span.offset is not None:
         line_start = text.rfind("\n", 0, span.offset) + 1
-        prefix = text[line_start : span.offset + len(span.quote)]
-        times = [m for m in _TIME_RE.finditer(prefix) if m.start() < (span.offset - line_start) + len(span.quote)]
-        # nearest HH:MM at or before the reading on the same line
-        before = [m for m in times if m.start() <= span.offset - line_start + len(span.quote)]
+        line_end = text.find("\n", span.offset)
+        line_end = len(text) if line_end < 0 else line_end
+        rel_start = span.offset - line_start
+        rel_end = rel_start + len(span.quote)
+        line = text[line_start:line_end]
+        before = [m for m in _TIME_RE.finditer(line) if m.end() <= rel_end]
+        after = [m for m in _TIME_RE.finditer(line) if m.start() >= rel_end]
         if before:
             t = parse_time(before[-1].group(0))
+        elif after:
+            t = parse_time(after[0].group(0))
     if t is None:
         t = parse_time(span.quote)
     return base.replace(hour=t.hour, minute=t.minute) if t else base
 
 
+# Flags that only mean "the model pointed at text the tables do not recognize".
+# The rules extractor already finds every recognized phrasing, so for a model-origin
+# span these carry no verified information: they are shown to the reviewer but do not
+# change the decision. The same flags on a rules-origin span would indicate a code bug.
+_ADVISORY_REASONS = {"NO_PATTERN_MATCH", "UNPARSEABLE_BP", "UNPARSEABLE_TEMP"}
+
+
 def _flag(span: Span, reason: str, code_label: str | None = None) -> ReviewFlag:
-    return ReviewFlag(reason, span.doc_id, span.quote, span.model_label, code_label, RULE_FOR_KIND.get(span.kind))
+    blocking = not (reason in _ADVISORY_REASONS and span.origin != "rules")
+    return ReviewFlag(reason, span.doc_id, span.quote, span.model_label, code_label, RULE_FOR_KIND.get(span.kind), blocking)
 
 
 def _text_fact(kind: str, value: object, span: Span, when: datetime | None, parser: str, meta: dict | None = None) -> Fact:
-    return Fact(kind, value, when, f"documents:{span.doc_id}", span.doc_id, span.quote, parser, meta or {})
+    full_meta = {"offset": span.offset, "origin": span.origin}
+    full_meta.update(meta or {})
+    return Fact(kind, value, when, f"documents:{span.doc_id}", span.doc_id, span.quote, parser, full_meta)
 
 
 def spans_to_facts(spans: list[Span], docs: dict[str, Doc], policy: Policy) -> tuple[list[Fact], list[ReviewFlag]]:
@@ -104,7 +120,7 @@ def spans_to_facts(spans: list[Span], docs: dict[str, Doc], policy: Policy) -> t
 
         label, flag = classify(span, policy)
         if flag is not None:
-            flags.append(ReviewFlag(flag.reason, flag.doc_id, flag.quote, flag.model_label, flag.code_label, RULE_FOR_KIND.get(span.kind)))
+            flags.append(_flag(span, flag.reason, flag.code_label))
             continue
         if span.kind == SpanKind.CONSENT_SIGNATURE:
             facts.append(_text_fact("CONSENT_SIG", label, span, when, "text"))

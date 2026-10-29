@@ -17,12 +17,14 @@ class UnitConflict(ValueError):
 
 
 _BP_RE = re.compile(r"(?<![\d/.])(\d{2,3})\s*/\s*(\d{2,3})(?![\d/%])")
-_TEMP_RE = re.compile(
-    r"(?:\b(?:temperature|temp|t)\b\.?\s*:?\s*)?"
-    r"(\d{2,3}(?:\.\d+)?)\s*°?\s*([cf])\b"
-    r"(?:\s*\(\s*(\d{2,3}(?:\.\d+)?)\s*°?\s*([cf])\s*\))?",
-    re.IGNORECASE,
-)
+_DUAL = r"(?:\s*\(\s*(?P<val2>\d{2,3}(?:\.\d+)?)\s*°?\s*(?P<unit2>[cf])\s*\))?"
+# A bare "92 F" is not a temperature (it could be an age/sex token). A reading needs a
+# label, a degree sign, or a decimal point.
+TEMP_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"\b(?:temperature|temp|t)\b\.?\s*:?\s*(?P<val>\d{2,3}(?:\.\d+)?)\s*°?\s*(?P<unit>[cf])\b" + _DUAL, re.IGNORECASE),
+    re.compile(r"(?P<val>\d{2,3}\.\d+)\s*°?\s*(?P<unit>[cf])\b" + _DUAL, re.IGNORECASE),
+    re.compile(r"(?P<val>\d{2,3})\s*°\s*(?P<unit>[cf])\b" + _DUAL, re.IGNORECASE),
+]
 _TIME_RE = re.compile(r"\b(\d{1,2}):(\d{2})\b")
 _DATE_US_RE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b")
 _DATE_ISO_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
@@ -30,8 +32,12 @@ _DATE_ISO_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 _ONE_DP = Decimal("0.1")
 
 
-def _q1(x: Decimal) -> Decimal:
+def q1(x: Decimal) -> Decimal:
+    """Round to one decimal place, half up. The single rounding rule for temperatures."""
     return x.quantize(_ONE_DP, rounding=ROUND_HALF_UP)
+
+
+_q1 = q1
 
 
 def c_to_f(c: Decimal) -> Decimal:
@@ -52,20 +58,30 @@ def _as_f(value: str, unit: str) -> Decimal:
     return c_to_f(v) if unit.upper() == "C" else _q1(v)
 
 
+def iter_temp_matches(text: str):
+    """Yield (match, start) for every plausible temperature reading, in text order."""
+    found: list[tuple[int, re.Match[str]]] = []
+    for pattern in TEMP_PATTERNS:
+        for m in pattern.finditer(text):
+            unit = m.group("unit").upper()
+            num = Decimal(m.group("val"))
+            plausible = (30 <= num <= 45) if unit == "C" else (85 <= num <= 115)
+            if plausible and not any(s <= m.start("val") < e for s, e in ((f.start("val"), f.end()) for _, f in found)):
+                found.append((m.start(), m))
+    found.sort(key=lambda t: t[0])
+    return found
+
+
 def parse_temp_f(quote: str) -> tuple[Decimal, str] | None:
     """Return (temperature_f, source_unit) or None. Raises UnitConflict."""
-    for m in _TEMP_RE.finditer(quote):
-        value, unit = m.group(1), m.group(2).upper()
-        num = Decimal(value)
-        plausible = (30 <= num <= 45) if unit == "C" else (85 <= num <= 115)
-        if not plausible:
-            continue
+    for _, m in iter_temp_matches(quote):
+        value, unit = m.group("val"), m.group("unit").upper()
         temp_f = _as_f(value, unit)
-        if m.group(3):
-            other = _as_f(m.group(3), m.group(4))
+        if m.group("val2"):
+            other = _as_f(m.group("val2"), m.group("unit2"))
             if abs(other - temp_f) > Decimal("0.2"):
                 raise UnitConflict(f"{quote!r}: {temp_f} F vs {other} F")
-            if m.group(4).upper() == "F":
+            if m.group("unit2").upper() == "F":
                 temp_f = other
         return temp_f, unit
     return None

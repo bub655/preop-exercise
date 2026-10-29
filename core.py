@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from preop_triage.model import Decision, Issue, IssueCategory, ProcedureRisk, TriageOutput
 from preop_triage.pipeline import make_extractor, run
@@ -57,7 +57,7 @@ class PatientInfo(BaseModel):
 class ProcedureInfo(BaseModel):
     case_id: str | None = None
     procedure_type: str | None = None
-    procedure_risk: ProcedureRisk | None = None
+    procedure_risk: str | None = None  # normalized and validated by the engine; unknown values are missing data
     procedure_date: str | None = None
     is_elective: bool | None = None
     location: str | None = None
@@ -167,7 +167,15 @@ def triage_submission(
     cached by document hash), or "union" (both). Every span passes the same
     grounding, parsing, classification, policy, and invariant gates.
     """
-    payload = submission.model_dump() if isinstance(submission, PatientSubmission) else PatientSubmission.model_validate(submission).model_dump()
     pol = policy or _policy()
     ext = make_extractor(extractor, policy=pol, model=model, use_cache=use_cache)
+    if isinstance(submission, PatientSubmission):
+        payload: dict[str, object] = submission.model_dump()
+    else:
+        try:
+            payload = PatientSubmission.model_validate(submission).model_dump()
+        except ValidationError:
+            # Malformed input is still triaged: ingestion flags each bad field and the
+            # result fails closed, instead of the caller getting an exception.
+            payload = dict(submission)
     return run(payload, policy=pol, extractor=ext)

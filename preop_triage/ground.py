@@ -40,6 +40,9 @@ def ground_spans(spans: list[Span], docs: dict[str, str]) -> tuple[list[Span], l
         if text is None:
             rejected.append(Rejection(span.doc_id, quote, "UNKNOWN_DOC", span.origin))
             continue
+        if span.offset is not None and 0 <= span.offset < len(text) and text.startswith(quote, span.offset):
+            kept.append(span)
+            continue
         exact = text.find(quote)
         if exact >= 0:
             kept.append(replace(span, offset=exact))

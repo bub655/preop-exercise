@@ -9,8 +9,9 @@ DOCS = {"d1": "Most recent BP 196/110 at the pre-op clinic.\nPatient signature: 
 SUB = {"procedure": {"procedure_date": None}, "vitals": [], "labs": []}
 
 
-def _issue(category: str, rule: str, quote: str | None = "BP 196/110", source: str = "documents:d1", doc_id: str | None = "d1") -> Issue:
-    return Issue(category=category, rule_id=rule, status="X", summary="s", evidence=[Evidence(source=source, doc_id=doc_id, quote=quote)])
+def _issue(category: str, rule: str, quote: str | None = "BP 196/110", source: str = "documents:d1", doc_id: str | None = "d1", status: str | None = None) -> Issue:
+    status = status or ("BP_EXCLUSION" if category == "ACUTE_SAFETY_EXCLUSION" else "X")
+    return Issue(category=category, rule_id=rule, status=status, summary="s", evidence=[Evidence(source=source, doc_id=doc_id, quote=quote)])
 
 
 def test_valid_output_passes_unchanged() -> None:

@@ -96,6 +96,7 @@ class ReviewFlag:
     model_label: str | None = None
     code_label: str | None = None
     rule_id: str | None = None
+    blocking: bool = True  # advisory flags inform the reviewer but do not change the decision
 
 
 class Evidence(BaseModel):
@@ -141,6 +142,7 @@ class ReviewFlagOut(BaseModel):
     model_label: str | None = None
     code_label: str | None = None
     rule_id: str | None = None
+    blocking: bool = True
 
 
 class Assumption(BaseModel):

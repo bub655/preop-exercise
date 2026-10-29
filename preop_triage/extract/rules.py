@@ -10,15 +10,11 @@ import re
 
 from ..classify import FIRST_MATCH_WINS, GROUP_FOR_KIND
 from ..model import Span, SpanKind
-from ..parsers import UnitConflict, parse_bp, parse_temp_f
+from ..parsers import UnitConflict, iter_temp_matches, parse_bp, parse_temp_f
 from ..policy import Policy
 
 _BP_SPAN_RE = re.compile(
     r"(?:(?:NIBP|BP:?|Blood pressure|Re-measured)\s*)?(?<![\d/.])\d{2,3}\s*/\s*\d{2,3}(?![\d/%])(?:\s*mmHg)?",
-    re.IGNORECASE,
-)
-_TEMP_SPAN_RE = re.compile(
-    r"(?:\b(?:temperature|temp|t)\b\.?\s*:?\s*)?\d{2,3}(?:\.\d+)?\s*°?\s*[cf]\b(?:\s*\(\s*\d{2,3}(?:\.\d+)?\s*°?\s*[cf]\s*\))?",
     re.IGNORECASE,
 )
 _SENTENCE_SPLIT = re.compile(r"(?<=[.;])\s+(?=[A-Z])")
@@ -67,7 +63,7 @@ class RuleSpanExtractor:
         for m in _BP_SPAN_RE.finditer(text):
             if parse_bp(m.group(0)) is not None:
                 add(SpanKind.VITAL_BP, m.start(), m.end())
-        for m in _TEMP_SPAN_RE.finditer(text):
+        for _, m in iter_temp_matches(text):
             try:
                 ok = parse_temp_f(m.group(0)) is not None
             except UnitConflict:

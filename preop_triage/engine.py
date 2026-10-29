@@ -111,7 +111,11 @@ def _latest_vital(ctx: _Ctx, kind: str, review_time: datetime | None) -> tuple[F
     if len(tied) > 1 and structured:
         ctx.assume(f"{kind}: structured reading and free-text reading share the same timestamp; tie resolved in favor of the structured value.", [ctx.evidence(f) for f in tied])
         return structured[0], True
-    tied.sort(key=lambda f: f.source)
+    if len(tied) > 1:
+        # same document date and time: the reading that appears later in the text is the later one
+        tied.sort(key=lambda f: (f.doc_id or "", f.meta.get("offset") if f.meta.get("offset") is not None else -1), reverse=True)
+        if len({f.value for f in tied}) > 1:
+            ctx.assume(f"{kind}: several free-text readings share the same timestamp; the one appearing last in the document was used.", [ctx.evidence(f) for f in tied])
     return tied[0], True
 
 
@@ -129,6 +133,10 @@ def _r0_and_r4(ctx: _Ctx, pdate: date | None, risk: str | None) -> None:
         r0_fail = True
         ev = [ctx.ev_path("procedure.procedure_risk")] + [ctx.evidence(f) for f in ctx.by_kind.get("PROCEDURE_RISK_STATEMENT", [])]
         ctx.issue("R0", "PROCEDURE_RISK_MISSING", "Procedure risk level is not assigned, so required testing cannot be determined.", ev, "Surgical team to assign LOW/MODERATE/HIGH risk.")
+    elif risk not in p.required_tests_by_risk:
+        r0_fail = True
+        ev = [ctx.ev_path("procedure.procedure_risk", risk)]
+        ctx.issue("R0", "PROCEDURE_RISK_UNKNOWN", f"Procedure risk level '{risk}' is not one of {', '.join(p.required_tests_by_risk)}, so required testing cannot be determined.", ev, "Surgical team to assign LOW/MODERATE/HIGH risk.")
 
     review_time = _review_time(ctx)
     bp, bp_ok = _latest_vital(ctx, "BP", review_time)
@@ -390,6 +398,8 @@ def _apply_flags(ctx: _Ctx, external: list[ReviewFlag]) -> None:
     ctx.flags = all_flags
     seen = set()
     for fl in all_flags:
+        if not fl.blocking:
+            continue
         rule = fl.rule_id or "R0"
         base = rule.split(".")[0]
         category = CATEGORY_FOR_RULE.get(rule, CATEGORY_FOR_RULE.get(base, "MISSING_REQUIRED_DATA"))
@@ -420,7 +430,7 @@ def evaluate(facts: list[Fact], review_flags: list[ReviewFlag], policy: Policy) 
     ctx.issues.sort(key=lambda i: (i.category, i.rule_id, i.status, i.summary))
     if any(i.category == "ACUTE_SAFETY_EXCLUSION" for i in ctx.issues):
         decision = "NOT_CLEARED"
-    elif ctx.issues or ctx.flags:
+    elif ctx.issues or any(f.blocking for f in ctx.flags):
         decision = "NEEDS_FOLLOW_UP"
     else:
         decision = "READY"

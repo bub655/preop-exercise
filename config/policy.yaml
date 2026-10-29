@@ -69,11 +69,14 @@ patterns:
     PREOP_HP: ['PREOPERATIVE HISTORY AND PHYSICAL', 'pre-?op(?:erative)?\s+(?:evaluation|h\s*&\s*p|history)', 'Planned procedure:']
     WELLNESS: ['annual wellness', 'establish care', 'wellness visit']
   consent_signature:
+    # SIGNED patterns are anchored to a name, a /s/ mark, or an "on file - signed" statement so a
+    # blank line ("Signed by patient: ____") or a negation ("not been signed by the patient") cannot
+    # pass. A quote matching both SIGNED and UNSIGNED is ambiguous and goes to review.
     SIGNED:
       - 'Patient signature on file\s*-\s*signed'
       - 'Patient signature:\s*/s/'
-      - 'Signed by patient:'
-      - 'signed by (?:the )?patient'
+      - 'Signed by patient:\s*[A-Za-z]'
+      - '(?<!\bnot )(?<!\bnot been )(?<!\bbeen )(?<!\bto be )(?<!\bmust be )(?<!\bwill be )(?<!\byet to be )signed by (?:the )?patient'
       - 'electronic consent obtained and signed'
       - '\be-?signed\b'
       - 'consent (?:form )?(?:was )?signed in clinic'
@@ -82,20 +85,24 @@ patterns:
       - 'signature[^\n]{0,40}pending'
       - 'NOT COMPLETED'
       - 'printed for (?:patient )?review'
-      - 'not yet signed'
+      - 'not (?:yet )?(?:been )?signed'
+      - '(?:to be|must be|will be|yet to be) signed'
       - 'Patient signature:\s*_{3,}'
+      - 'Signed by patient:\s*_{3,}'
       - 'signature line[^\n]{0,40}blank'
       - 'will return the signed consent'
       - 'unsigned'
+  # Timing must sit in the same sentence as the instruction ([^.;] stops at a sentence boundary), so
+  # an unrelated "48 hours" later on the line cannot make a vague plan look specific.
   anticoag_hold:
     SPECIFIC:
-      - '(?:hold|stop|discontinue|withhold)\s+{DRUG}[^\n]*?(?:\d+\s*days?\s*(?:before|prior)|last dose\s*\d{1,2}/\d{1,2}/\d{4})'
+      - '(?:hold|stop|discontinue|withhold)\s+{DRUG}[^\n.;]*?(?:\d+\s*days?\s*(?:before|prior)|last dose\s*\d{1,2}/\d{1,2}/\d{4})'
     VAGUE:
       - '(?:hold|stop|discontinue|withhold)\s+{DRUG}'
   anticoag_resume:
     SPECIFIC:
-      - '(?:resume|restart|reinitiate)\s+{DRUG}[^\n]*?(?:\d+\s*(?:-\s*\d+\s*)?hours?|post-?op(?:erative)?\s+day|\bPOD\s*\d|evening of surgery|day after surgery|morning after surgery)'
-      - '(?:resume|restart)\s+(?:the\s+)?{DRUG}[^\n]*?(?:after surgery|post-?op)'
+      - '(?:resume|restart|reinitiate)\s+{DRUG}[^\n.;]*?(?:\d+\s*(?:-\s*\d+\s*)?hours?|post-?op(?:erative)?\s+day|\bPOD\s*\d|evening of surgery|day after surgery|morning after surgery)'
+      - '(?:resume|restart)\s+(?:the\s+)?{DRUG}[^\n.;]*?(?:after surgery|post-?op)'
     VAGUE:
       - '(?:resume|restart|reinitiate)\s+{DRUG}'
       - 'resum\w+[^\n]{0,60}(?:will be addressed|to be determined|TBD)'

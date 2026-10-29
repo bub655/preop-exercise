@@ -6,6 +6,9 @@ from types import SimpleNamespace
 
 import anthropic
 
+import pytest
+
+from preop_triage.extract.base import ExtractorError
 from preop_triage.extract.cache import ExtractionCache
 from preop_triage.extract.claude import PROMPT_VERSION, SPAN_SCHEMA, ClaudeSpanExtractor
 from preop_triage.extract.rules import RuleSpanExtractor
@@ -75,24 +78,29 @@ def test_cache_key_changes_with_prompt_version_and_model(tmp_path: Path) -> None
     assert cache.key(TEXT, "1", "m") != cache.key(TEXT, "2", "m") != cache.key(TEXT, "1", "n")
 
 
-def test_api_error_returns_empty_and_records() -> None:
+def test_api_error_raises_extractor_error_and_records() -> None:
     err = anthropic.APIConnectionError(request=SimpleNamespace())
     fake = FakeMessages(GOOD, error=err)
     ext = ClaudeSpanExtractor(model="m", policy=POLICY, cache=None, client=_client(fake))
-    assert ext.extract("d1", None, TEXT) == []
+    with pytest.raises(ExtractorError):
+        ext.extract("d1", None, TEXT)
     assert ext.last_error is not None
 
 
-def test_refusal_stop_reason_returns_empty() -> None:
+def test_refusal_stop_reason_raises() -> None:
     fake = FakeMessages(GOOD, stop_reason="refusal")
     ext = ClaudeSpanExtractor(model="m", policy=POLICY, cache=None, client=_client(fake))
-    assert ext.extract("d1", None, TEXT) == [] and "refusal" in (ext.last_error or "")
+    with pytest.raises(ExtractorError):
+        ext.extract("d1", None, TEXT)
+    assert "refusal" in (ext.last_error or "")
 
 
-def test_invalid_json_returns_empty() -> None:
+def test_invalid_json_raises() -> None:
     fake = FakeMessages("not json")
     ext = ClaudeSpanExtractor(model="m", policy=POLICY, cache=None, client=_client(fake))
-    assert ext.extract("d1", None, TEXT) == [] and ext.last_error
+    with pytest.raises(ExtractorError):
+        ext.extract("d1", None, TEXT)
+    assert ext.last_error
 
 
 def test_empty_text_makes_no_call() -> None:

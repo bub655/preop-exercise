@@ -10,6 +10,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .model import Fact, ReviewFlag
+from .parsers import q1
 from .policy import Policy
 
 
@@ -30,6 +31,19 @@ def parse_iso(value: str | None) -> datetime | None:
         if offset is not None:
             dt = dt - offset
     return dt
+
+
+def _dicts(value: Any, source: str, flags: list[ReviewFlag], rule: str | None) -> list[dict[str, Any]]:
+    """A list of dicts, or an empty list plus a flag when the field is malformed."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        flags.append(ReviewFlag("MALFORMED_FIELD", None, source, None, None, rule))
+        return []
+    good = [v for v in value if isinstance(v, dict)]
+    if len(good) != len(value):
+        flags.append(ReviewFlag("MALFORMED_FIELD", None, source, None, None, rule))
+    return good
 
 
 def _int_or_none(v: Any) -> int | None:
@@ -60,11 +74,13 @@ def _ingest_vitals(vitals: list[dict[str, Any]], facts: list[Fact], flags: list[
                 flags.append(ReviewFlag("STRUCTURED_VITAL_INCOMPLETE", None, source, None, None, "R4"))
                 continue
             try:
-                temp = Decimal(str(raw)).quantize(Decimal("0.1"))
+                temp = Decimal(str(raw))
             except InvalidOperation:
+                temp = Decimal("NaN")
+            if not temp.is_finite():
                 flags.append(ReviewFlag("STRUCTURED_VITAL_INCOMPLETE", None, source, None, None, "R4"))
                 continue
-            facts.append(Fact("TEMP", temp, when, source))
+            facts.append(Fact("TEMP", q1(temp), when, source))
         # other vital types are not policy-relevant and are ignored
 
 
@@ -101,16 +117,32 @@ def _ingest_docs(docs: list[dict[str, Any]], facts: list[Fact], flags: list[Revi
 def ingest(submission: dict[str, Any], policy: Policy) -> tuple[list[Fact], list[ReviewFlag]]:
     facts: list[Fact] = []
     flags: list[ReviewFlag] = []
-    proc = submission.get("procedure") or {}
-    pdate = parse_iso(proc.get("procedure_date"))
+    proc = submission.get("procedure")
+    if not isinstance(proc, dict):
+        if proc is not None:
+            flags.append(ReviewFlag("MALFORMED_FIELD", None, "procedure", None, None, "R0"))
+        proc = {}
+    raw_date = proc.get("procedure_date")
+    pdate = parse_iso(raw_date) if isinstance(raw_date, str) else None
+    if raw_date not in (None, "") and pdate is None:
+        flags.append(ReviewFlag("STRUCTURED_DATE_UNPARSEABLE", None, str(raw_date), None, None, "R0"))
     facts.append(Fact("PROCEDURE_DATE", pdate.date() if pdate else None, None, "procedure.procedure_date"))
     risk = proc.get("procedure_risk")
-    facts.append(Fact("PROCEDURE_RISK", risk.upper() if isinstance(risk, str) and risk.strip() else None, None, "procedure.procedure_risk"))
-    facts.append(Fact("PROCEDURE_TYPE", proc.get("procedure_type") or None, None, "procedure.procedure_type"))
-    meta = submission.get("metadata") or {}
-    facts.append(Fact("REVIEW_TIME", parse_iso(meta.get("submission_received_at")), None, "metadata.submission_received_at"))
-    _ingest_vitals(submission.get("vitals") or [], facts, flags)
-    _ingest_labs(submission.get("labs") or [], policy, facts, flags)
-    _ingest_meds(submission.get("medications") or [], policy, facts)
-    _ingest_docs(submission.get("documents") or [], facts, flags)
+    if isinstance(risk, str) and risk.strip():
+        risk_value: str | None = risk.strip().upper()
+    else:
+        if risk not in (None, ""):
+            flags.append(ReviewFlag("MALFORMED_FIELD", None, "procedure.procedure_risk", None, None, "R0"))
+        risk_value = None
+    facts.append(Fact("PROCEDURE_RISK", risk_value, None, "procedure.procedure_risk"))
+    ptype = proc.get("procedure_type")
+    facts.append(Fact("PROCEDURE_TYPE", ptype if isinstance(ptype, str) and ptype else None, None, "procedure.procedure_type"))
+    meta = submission.get("metadata")
+    meta = meta if isinstance(meta, dict) else {}
+    received = meta.get("submission_received_at")
+    facts.append(Fact("REVIEW_TIME", parse_iso(received) if isinstance(received, str) else None, None, "metadata.submission_received_at"))
+    _ingest_vitals(_dicts(submission.get("vitals"), "vitals", flags, "R4"), facts, flags)
+    _ingest_labs(_dicts(submission.get("labs"), "labs", flags, "R2"), policy, facts, flags)
+    _ingest_meds(_dicts(submission.get("medications"), "medications", flags, "R3"), policy, facts)
+    _ingest_docs(_dicts(submission.get("documents"), "documents", flags, "R1"), facts, flags)
     return facts, flags

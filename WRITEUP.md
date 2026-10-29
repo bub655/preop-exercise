@@ -98,12 +98,26 @@ The `SpanExtractor` interface has three implementations, chosen with
   classifier. Deterministic, offline, no key. This is the recall floor.
 - `claude`: `claude-opus-5-5`, effort `medium`, cached on disk by
   sha256(document text, prompt version, model). API errors, refusals, and
-  truncated responses yield zero spans for that document and a review flag.
+  truncated responses raise a typed extractor error; the pipeline turns that
+  into a blocking `EXTRACTOR_ERROR` flag and a `MISSING_REQUIRED_DATA` issue,
+  so an unread document can never produce `READY`.
 - `union`: both, with each span tagged by origin, so provenance shows exactly
   what the model found beyond the rules.
 
 Everything after extraction is identical across the three, which is what makes
 the model's marginal value measurable instead of assumed.
+
+One consequence is worth stating plainly. For semantic kinds (signatures,
+plans, medication mentions) the rules extractor already finds every phrasing
+the pattern tables recognize. A model span those tables do not recognize
+therefore carries no verified information: it may be a real phrasing the
+tables lack, or noise such as a physician attestation quoted as a patient
+signature. Such spans become **advisory** review flags: they are listed in the
+output for the reviewer, but they do not change the decision or add a scored
+issue. A model label that *contradicts* the code's label on a recognized
+phrasing is a blocking flag, because that is a genuine conflict. Where the
+model can add real value is in locating values (vitals in unusual layouts),
+which the parsers verify independently.
 
 ### Policy as data
 
@@ -168,7 +182,30 @@ and `provenance` (policy version, extractor, model, prompt version, cache hits).
   `MISSING_REQUIRED_DATA` so a human looks, rather than to an exclusion the
   text does not support.
 - A structured and a free-text reading with the identical timestamp resolve in
-  favor of the structured value, recorded as an assumption.
+  favor of the structured value, recorded as an assumption. Two free-text
+  readings with the identical timestamp resolve to the one later in the
+  document, recorded as an assumption when their values differ.
+- A hold or restart instruction counts as specific only when its timing sits in
+  the same sentence. A decimal dose inside that sentence ("2.5 mg") currently
+  ends the sentence early and makes the plan read as vague, which fails closed.
+- Consent laterality is compared when both the scheduled procedure and the
+  consent state a side; a mismatch is `WRONG_PROCEDURE`.
+- A bare "92 F" with no label, degree sign, or decimal is not a temperature.
+- Malformed input (wrong types, unknown risk strings, non-finite numbers) is
+  triaged rather than rejected: each bad field is flagged and the result fails
+  closed.
+
+## Review findings that changed the code
+
+A fresh-context review of the branch reproduced four fail-open paths that
+ended in `READY`: a silent model-extractor failure masking a 192/114 blood
+pressure, blank or negated consent signatures matching the "signed" pattern,
+a vague restart instruction rescued by an unrelated "48 hours" later on the
+same line, and "92 F" in an age/sex token masking a 101.8 F fever. Each has a
+regression test in `tests/test_review_fixes.py`, alongside fixes for recency
+inside a document, rounding consistency between structured and text
+temperatures, consent laterality, and an invariant gate strong enough to catch
+those regressions on its own.
 
 ## What the starter did that this fixes
 

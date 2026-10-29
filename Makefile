@@ -6,7 +6,7 @@ MODEL ?= claude-opus-5-5
 EXTRACTOR ?= rules
 CACHE_FLAG ?=
 
-.PHONY: baseline evals determinism score report test all clean
+.PHONY: baseline evals determinism score report test synth all clean
 
 baseline:
 	uv run run_baseline.py \
@@ -37,6 +37,11 @@ report:
 
 test:
 	uv run pytest -q
+
+SYNTH_N ?= 500
+SYNTH_SEED ?= 1
+synth:
+	uv run run_synth.py --n $(SYNTH_N) --seed $(SYNTH_SEED)
 
 all: baseline evals determinism score
 

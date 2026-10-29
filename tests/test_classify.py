@@ -132,8 +132,10 @@ def test_procedure_match(scheduled: str, consent: str, expected: bool) -> None:
     assert procedure_matches(scheduled, consent, POLICY) is expected
 
 
-def test_procedure_match_unknown_noun_is_none() -> None:
-    assert procedure_matches("Elective frobnication", "frobnication", POLICY) is None
+def test_procedure_match_unlisted_nouns_fall_back_to_words() -> None:
+    assert procedure_matches("Elective frobnication", "frobnication", POLICY) is True
+    assert procedure_matches("Elective frobnication", "widget removal", POLICY) is False
+    assert procedure_matches("Elective", "", POLICY) is None
 
 
 def test_med_mention_stripped_quote_still_classifies() -> None:

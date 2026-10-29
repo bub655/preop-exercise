@@ -10,7 +10,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .model import Fact, ReviewFlag
-from .parsers import q1
+from .parsers import c_to_f, q1
 from .policy import Policy
 
 
@@ -54,41 +54,73 @@ def _int_or_none(v: Any) -> int | None:
     return None
 
 
-def _ingest_vitals(vitals: list[dict[str, Any]], facts: list[Fact], flags: list[ReviewFlag]) -> None:
+def _decimal(raw: Any) -> Decimal | None:
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        d = Decimal(str(raw))
+    except InvalidOperation:
+        return None
+    return d if d.is_finite() else None
+
+
+def structured_temp_f(v: dict[str, Any]) -> tuple[Decimal, str | None] | None:
+    """Fahrenheit value from value_f, value_c, or value+unit. None when absent or non-finite."""
+    if v.get("value_f") is not None:
+        d = _decimal(v.get("value_f"))
+        return (q1(d), None) if d is not None else None
+    if v.get("value_c") is not None:
+        d = _decimal(v.get("value_c"))
+        return (c_to_f(d), f"{d} C") if d is not None else None
+    if v.get("value") is not None:
+        d = _decimal(v.get("value"))
+        if d is None:
+            return None
+        unit = str(v.get("unit") or "").strip().lower()
+        if unit.startswith("c"):
+            return c_to_f(d), f"{d} C"
+        if unit.startswith("f"):
+            return q1(d), None
+        if 30 <= d <= 45:
+            return c_to_f(d), f"{d} C (unit inferred)"
+        if 85 <= d <= 115:
+            return q1(d), None
+    return None
+
+
+def _ingest_vitals(vitals: list[dict[str, Any]], policy: Policy, facts: list[Fact], flags: list[ReviewFlag]) -> None:
     for i, v in enumerate(vitals or []):
         source = f"vitals[{i}]"
-        vtype = (v.get("type") or "").lower()
+        kind = policy.vital_kind(v.get("type"))
+        if kind == "IGNORE":
+            continue
+        if kind is None:
+            flags.append(ReviewFlag("UNKNOWN_VITAL_TYPE", None, f"{source}: type={v.get('type')!r}", None, None, "R4"))
+            continue
         when = parse_iso(v.get("date"))
         if when is None:
             flags.append(ReviewFlag("STRUCTURED_DATE_UNPARSEABLE", None, str(v.get("date")), None, None, "R4"))
             continue
-        if vtype == "blood_pressure":
+        if kind == "BP":
             s, d = _int_or_none(v.get("systolic")), _int_or_none(v.get("diastolic"))
             if s is None or d is None:
                 flags.append(ReviewFlag("STRUCTURED_VITAL_INCOMPLETE", None, source, None, None, "R4"))
                 continue
             facts.append(Fact("BP", (s, d), when, source))
-        elif vtype == "temperature":
-            raw = v.get("value_f")
-            if raw is None:
+        else:
+            parsed = structured_temp_f(v)
+            if parsed is None:
                 flags.append(ReviewFlag("STRUCTURED_VITAL_INCOMPLETE", None, source, None, None, "R4"))
                 continue
-            try:
-                temp = Decimal(str(raw))
-            except InvalidOperation:
-                temp = Decimal("NaN")
-            if not temp.is_finite():
-                flags.append(ReviewFlag("STRUCTURED_VITAL_INCOMPLETE", None, source, None, None, "R4"))
-                continue
-            facts.append(Fact("TEMP", q1(temp), when, source))
-        # other vital types are not policy-relevant and are ignored
+            temp_f, converted = parsed
+            facts.append(Fact("TEMP", temp_f, when, source, meta={"converted_from": converted} if converted else {}))
 
 
 def _ingest_labs(labs: list[dict[str, Any]], policy: Policy, facts: list[Fact], flags: list[ReviewFlag]) -> None:
     for i, lab in enumerate(labs or []):
         source = f"labs[{i}]"
         when = parse_iso(lab.get("effective_at"))
-        code = policy.lab_codes.normalize(lab.get("code"))
+        code = policy.lab_codes.normalize(lab.get("code"), lab.get("display"))
         if when is None or code is None:
             flags.append(ReviewFlag("STRUCTURED_LAB_INCOMPLETE", None, source, None, None, "R2"))
             continue
@@ -134,14 +166,14 @@ def ingest(submission: dict[str, Any], policy: Policy) -> tuple[list[Fact], list
         if risk not in (None, ""):
             flags.append(ReviewFlag("MALFORMED_FIELD", None, "procedure.procedure_risk", None, None, "R0"))
         risk_value = None
-    facts.append(Fact("PROCEDURE_RISK", risk_value, None, "procedure.procedure_risk"))
+    facts.append(Fact("PROCEDURE_RISK", risk_value, None, "procedure.procedure_risk", meta={"raw": risk if isinstance(risk, str) else None}))
     ptype = proc.get("procedure_type")
     facts.append(Fact("PROCEDURE_TYPE", ptype if isinstance(ptype, str) and ptype else None, None, "procedure.procedure_type"))
     meta = submission.get("metadata")
     meta = meta if isinstance(meta, dict) else {}
     received = meta.get("submission_received_at")
     facts.append(Fact("REVIEW_TIME", parse_iso(received) if isinstance(received, str) else None, None, "metadata.submission_received_at"))
-    _ingest_vitals(_dicts(submission.get("vitals"), "vitals", flags, "R4"), facts, flags)
+    _ingest_vitals(_dicts(submission.get("vitals"), "vitals", flags, "R4"), policy, facts, flags)
     _ingest_labs(_dicts(submission.get("labs"), "labs", flags, "R2"), policy, facts, flags)
     _ingest_meds(_dicts(submission.get("medications"), "medications", flags, "R3"), policy, facts)
     _ingest_docs(_dicts(submission.get("documents"), "documents", flags, "R1"), facts, flags)

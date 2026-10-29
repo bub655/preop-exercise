@@ -67,15 +67,27 @@ class DrugTable(BaseModel):
 
 class LabCodes(BaseModel):
     table: dict[str, list[str]]
+    display_patterns: dict[str, list[str]] = Field(default_factory=dict)
 
-    def normalize(self, code: str | None) -> str | None:
-        if code is None:
-            return None
-        upper = code.strip().upper()
-        for canonical, aliases in self.table.items():
-            if upper == canonical or upper in {a.upper() for a in aliases}:
-                return canonical
-        return upper
+    def normalize(self, code: str | None, display: str | None = None) -> str | None:
+        """Canonical policy code from an alias (exact) or display text (pattern); else the upper-cased code."""
+        text_code = (code or "").strip()
+        upper = text_code.upper()
+        if upper:
+            for canonical, aliases in self.table.items():
+                if upper == canonical or upper in {str(a).upper() for a in aliases}:
+                    return canonical
+        for canonical, patterns in self.display_patterns.items():
+            for p in patterns:
+                rx = re.compile(p, re.IGNORECASE)
+                if (text_code and rx.search(text_code)) or (display and rx.search(display)):
+                    return canonical
+        return upper or None
+
+
+class PatternResolution(BaseModel):
+    negation_wins: dict[str, list[str]] = Field(default_factory=dict)
+    first_match_wins: list[str] = Field(default_factory=list)
 
 
 class Policy(BaseModel):
@@ -86,9 +98,23 @@ class Policy(BaseModel):
     thresholds: Thresholds
     lab_codes: LabCodes
     lab_final_statuses: list[str]
+    vital_types: dict[str, list[str]] = Field(default_factory=dict)
+    ignored_vital_types: list[str] = Field(default_factory=list)
     drugs: DrugTable
     procedure_nouns: list[str]
+    procedure_stopwords: list[str] = Field(default_factory=list)
+    pattern_resolution: PatternResolution = Field(default_factory=PatternResolution)
     patterns: dict[str, dict[str, list[str]]] = Field(default_factory=dict)
+
+    def vital_kind(self, vtype: str | None) -> str | None:
+        """'BP', 'TEMP', 'IGNORE', or None for an unrecognized type."""
+        key = (vtype or "").strip().lower().replace("-", "_")
+        for kind, names in self.vital_types.items():
+            if key in {n.lower() for n in names} or key.replace("_", " ") in {n.lower() for n in names}:
+                return kind
+        if key in {n.lower() for n in self.ignored_vital_types}:
+            return "IGNORE"
+        return None
 
     def compiled(self, group: str, label: str) -> list[re.Pattern[str]]:
         """Compile a pattern list with {DRUG} expanded. Cached per instance."""
@@ -108,5 +134,5 @@ class Policy(BaseModel):
 
 def load_policy(path: Path | None = None) -> Policy:
     raw = yaml.safe_load((path or DEFAULT_POLICY_PATH).read_text(encoding="utf-8"))
-    raw["lab_codes"] = {"table": raw["lab_codes"]}
+    raw["lab_codes"] = {"table": raw["lab_codes"], "display_patterns": raw.pop("lab_display_patterns", {})}
     return Policy.model_validate(raw)

@@ -43,7 +43,7 @@ def test_unparseable_grounded_span_becomes_flag() -> None:
 def test_hold_span_becomes_fact_with_drug() -> None:
     facts, flags = spans_to_facts([_span(SpanKind.ANTICOAG_HOLD, "Hold Xarelto for the 2 days before surgery (last dose 02/26/2026).")], DOCS, POLICY)
     assert flags == []
-    assert facts[0].kind == "ANTICOAG_HOLD" and facts[0].value == {"canonical": "rivaroxaban", "label": "SPECIFIC"}
+    assert facts[0].kind == "ANTICOAG_HOLD" and facts[0].value["canonical"] == "rivaroxaban" and facts[0].value["label"] == "SPECIFIC"
     assert facts[0].observed_at == datetime(2026, 3, 15)
 
 

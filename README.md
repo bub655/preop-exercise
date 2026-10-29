@@ -11,6 +11,7 @@ uv --version          # uv is the only prerequisite
 make test             # 160+ unit and integration tests, no API key needed
 make baseline evals score   # runs the 50 sample cases offline and scores them
 make report           # interactive TUI over the eval report
+make synth            # 500 synthetic held-out cases; reports fail-open and fail-closed rates
 ```
 
 No API key is needed for the default `rules` extractor. To exercise the model
@@ -44,6 +45,7 @@ preop_triage/
 config/policy.yaml      every number, drug table, and phrase pattern
 run_baseline.py         runs the pipeline over a JSONL (flags: --extractor, --no-cache, --policy)
 run_evals.py            local scoring: schema, decision, category set, per-category P/R, confusion, diff
+run_synth.py            synthetic held-out generator (preop_triage/synth.py) with fail-open / fail-closed report
 view_report.py          TUI (unchanged from the starter)
 tests/                  parsers, grounding, classification, ingestion, engine, invariants, pipeline, evals
 ```

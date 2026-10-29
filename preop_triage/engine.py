@@ -135,7 +135,8 @@ def _r0_and_r4(ctx: _Ctx, pdate: date | None, risk: str | None) -> None:
         ctx.issue("R0", "PROCEDURE_RISK_MISSING", "Procedure risk level is not assigned, so required testing cannot be determined.", ev, "Surgical team to assign LOW/MODERATE/HIGH risk.")
     elif risk not in p.required_tests_by_risk:
         r0_fail = True
-        ev = [ctx.ev_path("procedure.procedure_risk", risk)]
+        raw = next((f.meta.get("raw") for f in ctx.by_kind.get("PROCEDURE_RISK", []) if f.meta.get("raw")), None)
+        ev = [ctx.ev_path("procedure.procedure_risk", raw)]
         ctx.issue("R0", "PROCEDURE_RISK_UNKNOWN", f"Procedure risk level '{risk}' is not one of {', '.join(p.required_tests_by_risk)}, so required testing cannot be determined.", ev, "Surgical team to assign LOW/MODERATE/HIGH risk.")
 
     review_time = _review_time(ctx)
@@ -163,6 +164,8 @@ def _r0_and_r4(ctx: _Ctx, pdate: date | None, risk: str | None) -> None:
         ctx.issue("R0", "TEMP_MISSING", "No temperature reading found in structured vitals or documents.", [ctx.ev_path("vitals")] + deferred, "Obtain and record a temperature.")
     elif temp is not None:
         t: Decimal = temp.value
+        if temp.meta.get("unit_inferred"):
+            ctx.assume(f"Temperature reading {temp.quote!r} has no unit; read as {temp.meta['unit_inferred']} from its value range.", [ctx.evidence(temp)])
         comp = Computed(observed_date=temp.observed_at.isoformat(), observed_value=f"{t} F", threshold=f"temperature > {p.thresholds.temp_f} F", converted_from=temp.meta.get("converted_from"))
         r4_evidence.append(ctx.evidence(temp))
         if t > p.thresholds.temp_f:
@@ -370,11 +373,17 @@ def _r3_anticoag(ctx: _Ctx) -> None:
     deferred = [f for f in ctx.by_kind.get("ANTICOAG_DEFERRED", []) if f.value["canonical"] or _ANTICOAG_CONTEXT.search(f.quote or "")]
     fail = False
     pass_ev: list[Evidence] = []
+    def _for(facts_: list[Fact], canon: str) -> list[Fact]:
+        return [f for f in facts_ if f.value["label"] == "SPECIFIC" and (f.value["canonical"] == canon or (f.value["canonical"] is None and f.value.get("doc_canonical") == canon))]
+
     for canon, ev in active.items():
-        h = [f for f in holds if f.value["canonical"] == canon and f.value["label"] == "SPECIFIC"]
-        r = [f for f in resumes if f.value["canonical"] == canon and f.value["label"] == "SPECIFIC"]
+        h = _for(holds, canon)
+        r = _for(resumes, canon)
         pair = next(((hh, rr) for hh in h for rr in r if hh.doc_id == rr.doc_id), None)
         if pair:
+            for part in pair:
+                if part["value"]["canonical"] is None if isinstance(part, dict) else part.value["canonical"] is None:
+                    ctx.assume(f"Plan line {part.quote!r} names no drug; attributed to {canon}, the only anticoagulant that document discusses.", [ctx.evidence(part)])
             pass_ev += [ctx.evidence(pair[0]), ctx.evidence(pair[1])]
             continue
         fail = True

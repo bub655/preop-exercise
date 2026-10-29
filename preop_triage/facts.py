@@ -111,10 +111,12 @@ def spans_to_facts(spans: list[Span], docs: dict[str, Doc], policy: Policy) -> t
                 flags.append(_flag(span, "UNPARSEABLE_TEMP"))
                 continue
             temp_f, unit = parsed
-            meta = {}
-            if unit == "C":
-                m = re.search(r"(\d{2,3}(?:\.\d+)?)\s*°?\s*([cC])\b", span.quote)
-                meta["converted_from"] = f"{m.group(1)} C" if m else span.quote
+            meta: dict = {}
+            if unit.endswith("?"):
+                meta["unit_inferred"] = unit[0]
+            if unit.startswith("C"):
+                m = re.search(r"(\d{2,3}(?:\.\d+)?)\s*(?:°\s*|degrees?\s+)?(?:[cC]\b|celsius|centigrade)", span.quote, re.IGNORECASE)
+                meta["converted_from"] = (f"{m.group(1)} C" if m else span.quote) + (" (unit inferred)" if "unit_inferred" in meta else "")
             facts.append(_text_fact("TEMP", temp_f, span, when, "text_temp", meta))
             continue
 
@@ -134,7 +136,13 @@ def spans_to_facts(spans: list[Span], docs: dict[str, Doc], policy: Policy) -> t
             facts.append(_text_fact("MED_MENTION", {"canonical": canonical, "class": cls, "label": label}, span, when, "text"))
         elif span.kind in (SpanKind.ANTICOAG_HOLD, SpanKind.ANTICOAG_RESUME, SpanKind.ANTICOAG_DEFERRED):
             canonical, _ = policy.drugs.classify(span.quote)
-            facts.append(_text_fact(span.kind.value, {"canonical": canonical, "label": label}, span, when, "text"))
+            # An instruction that names no drug ("Anticoagulation to be resumed 48 hours post-op")
+            # inherits the anticoagulant the document itself discusses, if it discusses exactly one.
+            doc_canonical = None
+            if canonical is None:
+                named = {c for c in (policy.drugs.classify(line)[0] for line in (doc.text or "").split("\n")) if c and policy.drugs.classify(c)[1] == "anticoagulant"}
+                doc_canonical = next(iter(named)) if len(named) == 1 else None
+            facts.append(_text_fact(span.kind.value, {"canonical": canonical, "label": label, "doc_canonical": doc_canonical}, span, when, "text"))
         elif span.kind == SpanKind.PROCEDURE_DATE_STATEMENT:
             facts.append(_text_fact("PROCEDURE_DATE_STATEMENT", {"label": label, "date": parse_date(span.quote)}, span, when, "text"))
         else:  # DOC_ABSENCE, VITALS_DEFERRED, PROCEDURE_RISK_STATEMENT, DOC_ENCOUNTER_KIND, PLANNED_PROCEDURE

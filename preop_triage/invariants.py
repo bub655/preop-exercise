@@ -13,6 +13,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .engine import CATEGORY_FOR_RULE
+from .ingest import structured_temp_f
 from .model import Evidence, ReviewFlagOut, TriageOutput
 from .parsers import UnitConflict, parse_bp, parse_temp_f, q1
 from .policy import Policy, load_policy
@@ -37,7 +38,9 @@ def _resolve(source: str, submission: dict[str, Any]) -> tuple[bool, Any]:
     if not m:
         return False, None
     top, idx, field = m.group(1), m.group(2), m.group(3)
-    value: Any = submission.get(top) if isinstance(submission, dict) else None
+    if not isinstance(submission, dict) or top not in submission:
+        return False, None
+    value: Any = submission.get(top)
     if idx is not None:
         if not isinstance(value, list) or not 0 <= int(idx) < len(value):
             return False, None
@@ -70,15 +73,13 @@ def _exclusion_backed(e: Evidence, docs: dict[str, str], submission: dict[str, A
     if not found or not isinstance(vital, dict):
         return False
     bp = None
-    temp = None
     try:
         if vital.get("systolic") is not None and vital.get("diastolic") is not None:
             bp = (int(vital["systolic"]), int(vital["diastolic"]))
-        if vital.get("value_f") is not None:
-            temp = q1(Decimal(str(vital["value_f"])))
-    except (TypeError, ValueError, InvalidOperation):
+    except (TypeError, ValueError):
         return False
-    return _exceeds(bp, temp, policy)
+    parsed = structured_temp_f(vital)
+    return _exceeds(bp, parsed[0] if parsed else None, policy)
 
 
 def _violations(out: TriageOutput, docs: dict[str, str], submission: dict[str, Any], policy: Policy) -> list[str]:

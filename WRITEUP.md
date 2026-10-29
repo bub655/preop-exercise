@@ -126,11 +126,54 @@ Windows, thresholds, required tests by risk, the lab-code map (`BMP` is not
 consent matching, and every phrase pattern live in `config/policy.yaml` with
 an effective date. The engine contains no clinical numbers.
 
+## Generalization: a held-out synthetic set
+
+The pattern tables were first built against the 50 sample cases, and a score
+on those cases cannot show whether the system generalizes. So the repo includes
+a synthetic case generator (`preop_triage/synth.py`, `make synth`) whose
+phrasing banks were written from general clinical documentation rather than
+copied from the sample: nine H&P title variants, twelve unsigned and ten signed
+consent phrasings, eight hold and nine restart phrasings, ten blood-pressure
+layouts including `SBP 182, DBP 96`, Celsius and unit-less temperatures,
+structured `value_c` vitals and `bp`/`temp` type aliases, CPT and display-name
+lab codes, seven anticoagulants, unlisted procedures with laterality, and
+unknown risk strings. Ground truth comes from the scenario parameters, never
+from the engine.
+
+Errors are split into **fail-open** (an exclusion or follow-up the system
+cleared; must be zero) and **fail-closed** (a follow-up it did not need; the
+recall cost).
+
+| Run | Cases | Fully correct | Fail-open | Fail-closed |
+|-----|------:|--------------:|----------:|------------:|
+| Before broadening (tables tuned on the sample only) | 400 | 24% | 30% | 46% |
+| After broadening, 5 seeds | 2000 | 100% | 0% | 0% |
+
+The broadening pass changed parsers (temperature unit words and inference,
+`SBP/DBP` pairs, month-name dates), structured ingestion (vital type aliases,
+`value_c`, CPT and display-name lab codes, an `UNKNOWN_VITAL_TYPE` flag so an
+unrecognized vital can never be dropped silently), the pattern tables (cue plus
+negation rather than enumerated sentences, with negation winning for
+signatures and medication mentions), consent matching (shared content words
+when neither side names a listed procedure, laterality), and plan attribution
+(a drugless "anticoagulation to be resumed 48 hours post-op" inherits the one
+anticoagulant its document discusses, recorded as an assumption).
+
+Two caveats, stated plainly. First, the generator and the tables were written
+by the same author, so 100% on it is a lower bound on generalization, not
+proof. A phrasing neither anticipated still fails closed, which is the
+property that matters, and the generator exists so the next unanticipated
+phrasing becomes a test rather than an incident. Second, the broadening did
+surface one real tension with the sample: "per surgical team" appended to a
+complete restart instruction is attribution, not deferral, and the tables now
+distinguish the two.
+
 ## Results on the 50 labeled cases
 
 | Extractor | Decision match | Category set match | Aggregate | Determinism (10 runs) |
 |-----------|---------------:|-------------------:|----------:|----------------------:|
 | rules     | 50/50          | 50/50              | 100%      | 100% byte-identical   |
+| rules, synthetic held-out (2000 cases, 5 seeds) | 2000/2000 | 2000/2000 | 100% | n/a |
 | claude    | not run        | not run            |           |                       |
 
 The `claude` and `union` rows were not run because no Anthropic key was

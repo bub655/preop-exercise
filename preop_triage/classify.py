@@ -27,7 +27,7 @@ GROUP_FOR_KIND: dict[SpanKind, str] = {
     SpanKind.CONSENT_PROCEDURE: "consent_procedure",
 }
 
-# Groups whose labels are ordered most-specific first; the first match wins.
+# Fallback when the policy config does not list resolution rules.
 FIRST_MATCH_WINS = {"anticoag_hold", "anticoag_resume"}
 
 VALUE_KINDS = {SpanKind.VITAL_BP, SpanKind.VITAL_TEMP, SpanKind.DOC_TITLE}
@@ -49,14 +49,31 @@ def classify(span: Span, policy: Policy) -> tuple[str | None, ReviewFlag | None]
     if group is None:
         return None, ReviewFlag("UNKNOWN_SPAN_KIND", span.doc_id, span.quote, span.model_label, None)
     hits = _matching_labels(group, span.quote, policy)
+    if group in ("anticoag_hold", "anticoag_resume") and "SPECIFIC" in hits and _matching_labels("anticoag_deferred", span.quote, policy):
+        # "Resumption of X will be addressed postoperatively" is a deferral, however it is phrased
+        hits = [h for h in hits if h != "SPECIFIC"] or ["VAGUE"]
     if not hits:
         return None, ReviewFlag("NO_PATTERN_MATCH", span.doc_id, span.quote, span.model_label, None)
-    if len(hits) > 1 and group not in FIRST_MATCH_WINS:
+    code_label = _resolve_labels(group, hits, policy)
+    if code_label is None:
         return None, ReviewFlag("AMBIGUOUS_PATTERN_MATCH", span.doc_id, span.quote, span.model_label, "|".join(hits))
-    code_label = hits[0]
     if span.model_label is not None and span.model_label != code_label:
         return None, ReviewFlag("MODEL_CODE_DISAGREE", span.doc_id, span.quote, span.model_label, code_label)
     return code_label, None
+
+
+def _resolve_labels(group: str, hits: list[str], policy: Policy) -> str | None:
+    """Pick one label from several matches per the policy's resolution rules; None if ambiguous."""
+    if len(hits) == 1:
+        return hits[0]
+    order = policy.pattern_resolution.negation_wins.get(group)
+    if order:
+        for label in order:  # most negative first: "not signed" beats "signed"
+            if label in hits:
+                return label
+    if group in set(policy.pattern_resolution.first_match_wins) | FIRST_MATCH_WINS:
+        return hits[0]
+    return None
 
 
 def classify_doc_kind(title: str | None, text: str | None, policy: Policy) -> str:
@@ -76,6 +93,11 @@ def classify_doc_kind(title: str | None, text: str | None, policy: Policy) -> st
     return "OTHER"
 
 
+def _content_words(text: str, policy: Policy) -> set[str]:
+    stop = {w.lower() for w in policy.procedure_stopwords}
+    return {w for w in re.findall(r"[a-z][a-z-]{3,}", text.lower()) if w not in stop}
+
+
 def _nouns_in(text: str, policy: Policy) -> set[str]:
     lowered = text.lower()
     found: set[str] = set()
@@ -93,14 +115,20 @@ def procedure_matches(scheduled: str | None, consent_line: str | None, policy: P
         return None
     a = _nouns_in(scheduled, policy)
     b = _nouns_in(consent_line, policy)
-    if not a or not b:
-        return None
-    if a != b:
-        return False
     side_a, side_b = _laterality(scheduled), _laterality(consent_line)
     if side_a and side_b and side_a != side_b:
         return False
-    return True
+    if a and b:
+        # equal, or one side is a more specific statement of the other ("Whipple" vs "pancreaticoduodenectomy (Whipple)")
+        return a == b or a <= b or b <= a
+    if a or b:
+        # one side names a listed procedure and the other does not: mismatch unless the words agree
+        wa, wb = _content_words(scheduled, policy), _content_words(consent_line, policy)
+        return bool(wa & wb) and (a <= _nouns_in(consent_line, policy) or b <= _nouns_in(scheduled, policy))
+    wa, wb = _content_words(scheduled, policy), _content_words(consent_line, policy)
+    if not wa or not wb:
+        return None
+    return bool(wa & wb)
 
 
 _SIDES = ("bilateral", "left", "right")

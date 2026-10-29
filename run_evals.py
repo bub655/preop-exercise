@@ -1,11 +1,3 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.11"
-# dependencies = [
-#   "openai>=2.0.0",
-#   "pydantic>=2.8.0",
-# ]
-# ///
 
 """Run local OpenAI Evals scoring and determinism checks for baseline triage outputs."""
 

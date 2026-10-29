@@ -32,3 +32,4 @@ data/baseline_outputs.jsonl
 data/eval_report.json
 data/determinism_report.json
 .superpowers/
+uv.lock

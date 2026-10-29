@@ -284,3 +284,16 @@ def test_bare_takes_without_reporting_verb_is_not_a_mention() -> None:
 def test_reporting_verb_still_anchors_taking() -> None:
     assert _label(SpanKind.MED_MENTION, "Pt states she takes Eliquis 5 mg twice daily") == "TAKING"
     assert _label(SpanKind.MED_MENTION, "patient reports he takes Xarelto") == "TAKING"
+
+
+# --- a decimal dose must not end the sentence (held-out case 04) -------------------------
+
+
+def test_decimal_dose_inside_plan_sentence_is_still_specific() -> None:
+    assert _label(SpanKind.ANTICOAG_HOLD, "Hold apixaban 2.5 mg for 2 days before surgery (last dose 03/02/2026).") == "SPECIFIC"
+    assert _label(SpanKind.ANTICOAG_RESUME, "Resume apixaban 2.5 mg BID 48 hours after surgery once hemostasis is confirmed.") == "SPECIFIC"
+
+
+def test_period_between_digits_only_does_not_cross_sentences() -> None:
+    assert _label(SpanKind.ANTICOAG_RESUME, "Resume Xarelto when cleared by the surgeon; timing to be determined. Ice to wrist for 48 hours.") != "SPECIFIC"
+    assert _label(SpanKind.ANTICOAG_HOLD, "Hold warfarin per cardiology.2 days before surgery is the usual.") != "SPECIFIC"

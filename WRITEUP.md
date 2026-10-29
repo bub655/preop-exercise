@@ -235,8 +235,8 @@ and `provenance` (policy version, extractor, model, prompt version, cache hits).
   readings with the identical timestamp resolve to the one later in the
   document, recorded as an assumption when their values differ.
 - A hold or restart instruction counts as specific only when its timing sits in
-  the same sentence. A decimal dose inside that sentence ("2.5 mg") currently
-  ends the sentence early and makes the plan read as vague, which fails closed.
+  the same sentence. A period ends a sentence except between two digits, so a
+  decimal dose ("2.5 mg") stays inside the sentence.
 - Consent laterality is compared when both the scheduled procedure and the
   consent state a side; a mismatch is `WRONG_PROCEDURE`.
 - A bare "92 F" with no label, degree sign, or decimal is not a temperature.

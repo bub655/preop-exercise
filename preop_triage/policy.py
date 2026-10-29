@@ -11,6 +11,10 @@ from pydantic import BaseModel, Field, field_validator
 
 DEFAULT_POLICY_PATH = Path(__file__).resolve().parent.parent / "config" / "policy.yaml"
 
+# "[^\n.;]" in a pattern means "stay inside this sentence". A period ends a sentence except when it
+# sits between two digits ("2.5 mg"), so that class expands to allow exactly that case.
+_IN_SENTENCE = r"(?:[^\n.;]|(?<=\d)\.(?=\d))"
+
 
 class Windows(BaseModel):
     hp_days: int
@@ -127,7 +131,7 @@ class Policy(BaseModel):
         if key not in cache:
             drug = self.drugs.drug_regex()
             cache[key] = [
-                re.compile(p.replace("{DRUG}", drug), re.IGNORECASE | re.MULTILINE)
+                re.compile(p.replace("{DRUG}", drug).replace("[^\\n.;]", _IN_SENTENCE), re.IGNORECASE | re.MULTILINE)
                 for p in self.patterns.get(group, {}).get(label, [])
             ]
         return cache[key]

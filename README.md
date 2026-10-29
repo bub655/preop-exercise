@@ -8,10 +8,17 @@ locates text; code makes every decision. See `WRITEUP.md` for the approach and
 
 ```bash
 uv --version          # uv is the only prerequisite
-make test             # 160+ unit and integration tests, no API key needed
+make test             # 330+ unit and integration tests, no API key needed
 make baseline evals score   # runs the 50 sample cases offline and scores them
 make report           # interactive TUI over the eval report
 make synth            # 500 synthetic held-out cases; reports fail-open and fail-closed rates
+make determinism      # replays one case 10x; prints decision, decision-bearing, and full-bytes stability
+```
+
+The ten hand-written held-out cases score the same way:
+
+```bash
+make baseline evals INPUT=data/heldout_cases.jsonl OUTPUT=data/heldout_outputs.jsonl REPORT=data/heldout_report.json
 ```
 
 No API key is needed for the default `rules` extractor. To exercise the model
@@ -20,7 +27,7 @@ extractor:
 ```bash
 export ANTHROPIC_API_KEY="<your key>"
 make baseline evals EXTRACTOR=claude   # or EXTRACTOR=union
-make determinism EXTRACTOR=claude CACHE_FLAG=--no-cache   # replay the model 10x on one case
+make determinism EXTRACTOR=claude CACHE_FLAG=--no-cache   # 10 cold replays; expect decision-bearing 100%, full bytes lower (advisory flags vary)
 ```
 
 Model responses are cached under `data/cache/extractions/` keyed by document
@@ -46,6 +53,7 @@ config/policy.yaml      every number, drug table, and phrase pattern
 run_baseline.py         runs the pipeline over a JSONL (flags: --extractor, --no-cache, --policy)
 run_evals.py            local scoring: schema, decision, category set, per-category P/R, confusion, diff
 run_synth.py            synthetic held-out generator (preop_triage/synth.py) with fail-open / fail-closed report
+scripts/make_heldout_cases.py  builds data/heldout_cases.jsonl, ten hand-written held-out cases
 view_report.py          TUI (unchanged from the starter)
 tests/                  parsers, grounding, classification, ingestion, engine, invariants, pipeline, evals
 ```
@@ -79,5 +87,6 @@ confusion matrix, and a diff against the previous report.
 ## Data
 
 - `data/patients_sample_50.jsonl`: `case_id`, `submission`, `label`
+- `data/heldout_cases.jsonl`: ten hand-written held-out cases, same shape
 - `data/baseline_outputs.jsonl`, `data/eval_report.json`,
   `data/determinism_report.json`: generated

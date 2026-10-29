@@ -342,3 +342,29 @@ def test_vague_continue_stays_incomplete_plan() -> None:
     text = "CARDIOLOGY CONSULTATION\nHPI: maintained on Eliquis 5 mg BID.\nRECOMMENDATIONS:\n  1. Continue Eliquis.\n"
     res = evaluate(base_facts(extra=[_med("apixaban 5 mg PO BID", "apixaban", "anticoagulant", True)] + _plan_facts(text)), [], POLICY)
     assert cats(res) == ["ANTICOAGULATION_MANAGEMENT"] and res.issues[0].status == "INCOMPLETE_PLAN"
+
+
+# --- generic "continue home medications" must never become a plan for any drug ----------------
+
+GENERIC_CONTINUE = "Continue home medications except as directed by perioperative team"
+
+
+def test_generic_continue_home_medications_is_not_a_continue_plan() -> None:
+    label, flag = classify(Span(SpanKind.ANTICOAG_CONTINUE, "d", GENERIC_CONTINUE, 0, None, "claude"), POLICY)
+    assert label is None and flag is not None and flag.reason == "NO_PATTERN_MATCH"
+    # at the fact layer a model-origin unmatched span is advisory, never blocking
+    docs = {"d": Doc("d", "Consult", "2026-02-22", "MD", GENERIC_CONTINUE, 0)}
+    facts, flags = spans_to_facts([Span(SpanKind.ANTICOAG_CONTINUE, "d", GENERIC_CONTINUE, 0, None, "claude")], docs, POLICY)
+    assert not any(f.kind == "ANTICOAG_CONTINUE" for f in facts) and flags[0].blocking is False
+
+
+def test_generic_continue_does_not_satisfy_r3_for_any_drug() -> None:
+    text = f"CARDIOLOGY CONSULTATION\nHPI: maintained on Eliquis 5 mg BID.\nRECOMMENDATIONS:\n  1. {GENERIC_CONTINUE}.\n"
+    docs = {"p": Doc("p", "Cardiology Consultation", "2026-02-22", "MD", text, 0)}
+    model_span = Span(SpanKind.ANTICOAG_CONTINUE, "p", GENERIC_CONTINUE, text.index(GENERIC_CONTINUE), "SPECIFIC", "claude")
+    kept, _ = ground_spans(RULES.extract("p", None, text) + [model_span], {"p": text})
+    tf, flags = spans_to_facts(kept, docs, POLICY)
+    assert not any(f.kind == "ANTICOAG_CONTINUE" for f in tf)
+    for drug, canon in (("Eliquis 5 mg BID", "apixaban"), ("warfarin 5 mg", "warfarin")):
+        res = evaluate(base_facts(extra=[_med(drug, canon, "anticoagulant", True)] + [f for f in tf if f.kind != "DOC_KIND"]), flags, POLICY)
+        assert cats(res) == ["ANTICOAGULATION_MANAGEMENT"] and res.issues[0].status == "NO_PLAN", canon

@@ -20,7 +20,7 @@ from ..policy import Policy
 from .base import ExtractorError
 from .cache import ExtractionCache
 
-PROMPT_VERSION = "1"
+PROMPT_VERSION = "2"
 MAX_TOKENS = 8192
 EFFORT = "medium"
 
@@ -56,6 +56,7 @@ _KIND_HELP = {
     SpanKind.MED_MENTION: "a short phrase stating the patient is taking, not taking, or unsure about an anticoagulant or antiplatelet, including the drug name.",
     SpanKind.ANTICOAG_HOLD: "an instruction to hold/stop an anticoagulant before surgery, including the drug name and timing.",
     SpanKind.ANTICOAG_RESUME: "an instruction to resume/restart an anticoagulant after surgery, including the drug name and timing.",
+    SpanKind.ANTICOAG_CONTINUE: "an instruction to continue an anticoagulant through surgery without interruption, including the drug name.",
     SpanKind.ANTICOAG_DEFERRED: "a statement deferring anticoagulation management to another team or to later.",
     SpanKind.DOC_ABSENCE: "a statement that an H&P or consent is not on file / not yet obtained.",
     SpanKind.PROCEDURE_DATE_STATEMENT: "a statement of the scheduled procedure date or that it is pending.",

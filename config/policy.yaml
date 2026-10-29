@@ -124,7 +124,7 @@ pattern_resolution:
   negation_wins:
     consent_signature: [UNSIGNED, SIGNED]
     med_mention: [UNKNOWN, NOT_TAKING, TAKING]
-  first_match_wins: [anticoag_hold, anticoag_resume]
+  first_match_wins: [anticoag_hold, anticoag_resume, anticoag_continue]
 
 patterns:
   doc_title:
@@ -213,6 +213,16 @@ patterns:
       - '(?:resume|restart|re-?start|reinitiate|reinstate)\s+[^\n.;]{0,30}?{DRUG}'
       - 'resum\w+[^\n]{0,60}(?:will be addressed|to be determined|TBD)'
       - 'anticoagulation[^\n.;]*?(?:be )?(?:resumed|restarted)'
+  # A plan that continues the drug satisfies Rule 3: "not interrupted" describes management both
+  # before and after. SPECIFIC only when the sentence carries a perioperative phrase; a bare
+  # "continue apixaban" is VAGUE.
+  anticoag_continue:
+    SPECIFIC:
+      - '(?:continue|continuing|maintain|do not (?:hold|stop|interrupt))\s+(?:the\s+|her\s+|his\s+|their\s+|home\s+|on\s+)?{DRUG}[^\n.;]*?(?:through(?:out)? (?:the )?(?:surgery|procedure|perioperative period)|without interruption|uninterrupted|peri-?operatively|peri-?procedurally|before (?:and|or) after|pre-? ?and post-?op\w*|no doses? (?:are to be |will be |to be )?held)'
+      - '{DRUG}[^\n.;]*?(?:to be |should be |will be |may be |is to be )?continued[^\n.;]*?(?:through(?:out)? (?:the )?(?:surgery|procedure|perioperative period)|without interruption|uninterrupted|peri-?operatively|peri-?procedurally|before (?:and|or) after)'
+    VAGUE:
+      - '(?:continue|continuing|maintain)\s+(?:the\s+|her\s+|his\s+|their\s+|home\s+|on\s+)?{DRUG}'
+      - '{DRUG}[^\n.;]*?(?:to be |should be |will be |may be )?continued'
   anticoag_deferred:
     DEFERRED:
       - 'to be determined by (?:the )?(?:surg\w+|operating surgeon|primary team)'

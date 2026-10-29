@@ -16,6 +16,7 @@ GROUP_FOR_KIND: dict[SpanKind, str] = {
     SpanKind.CONSENT_SIGNATURE: "consent_signature",
     SpanKind.ANTICOAG_HOLD: "anticoag_hold",
     SpanKind.ANTICOAG_RESUME: "anticoag_resume",
+    SpanKind.ANTICOAG_CONTINUE: "anticoag_continue",
     SpanKind.ANTICOAG_DEFERRED: "anticoag_deferred",
     SpanKind.MED_MENTION: "med_mention",
     SpanKind.VITALS_DEFERRED: "vitals_deferred",
@@ -28,7 +29,7 @@ GROUP_FOR_KIND: dict[SpanKind, str] = {
 }
 
 # Fallback when the policy config does not list resolution rules.
-FIRST_MATCH_WINS = {"anticoag_hold", "anticoag_resume"}
+FIRST_MATCH_WINS = {"anticoag_hold", "anticoag_resume", "anticoag_continue"}
 
 VALUE_KINDS = {SpanKind.VITAL_BP, SpanKind.VITAL_TEMP, SpanKind.DOC_TITLE}
 
@@ -49,7 +50,7 @@ def classify(span: Span, policy: Policy) -> tuple[str | None, ReviewFlag | None]
     if group is None:
         return None, ReviewFlag("UNKNOWN_SPAN_KIND", span.doc_id, span.quote, span.model_label, None)
     hits = _matching_labels(group, span.quote, policy)
-    if group in ("anticoag_hold", "anticoag_resume") and "SPECIFIC" in hits and _matching_labels("anticoag_deferred", span.quote, policy):
+    if group in ("anticoag_hold", "anticoag_resume", "anticoag_continue") and "SPECIFIC" in hits and _matching_labels("anticoag_deferred", span.quote, policy):
         # "Resumption of X will be addressed postoperatively" is a deferral, however it is phrased
         hits = [h for h in hits if h != "SPECIFIC"] or ["VAGUE"]
     if not hits:

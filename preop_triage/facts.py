@@ -29,6 +29,7 @@ RULE_FOR_KIND: dict[SpanKind, str] = {
     SpanKind.MED_MENTION: "R3",
     SpanKind.ANTICOAG_HOLD: "R3",
     SpanKind.ANTICOAG_RESUME: "R3",
+    SpanKind.ANTICOAG_CONTINUE: "R3",
     SpanKind.ANTICOAG_DEFERRED: "R3",
     SpanKind.PROCEDURE_DATE_STATEMENT: "R0",
     SpanKind.PROCEDURE_RISK_STATEMENT: "R0",
@@ -135,7 +136,7 @@ def spans_to_facts(spans: list[Span], docs: dict[str, Doc], policy: Policy) -> t
             if canonical is None and re.search(r"anticoagul", span.quote, re.IGNORECASE):
                 cls = "anticoagulant"
             facts.append(_text_fact("MED_MENTION", {"canonical": canonical, "class": cls, "label": label}, span, when, "text"))
-        elif span.kind in (SpanKind.ANTICOAG_HOLD, SpanKind.ANTICOAG_RESUME, SpanKind.ANTICOAG_DEFERRED):
+        elif span.kind in (SpanKind.ANTICOAG_HOLD, SpanKind.ANTICOAG_RESUME, SpanKind.ANTICOAG_CONTINUE, SpanKind.ANTICOAG_DEFERRED):
             canonical, _ = policy.drugs.classify(span.quote)
             # An instruction that names no drug ("Anticoagulation to be resumed 48 hours post-op")
             # inherits the anticoagulant the document itself discusses, if it discusses exactly one.

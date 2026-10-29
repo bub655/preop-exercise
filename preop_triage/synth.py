@@ -103,6 +103,13 @@ RESUME_LINES = [
     "Resume home dose of {generic} the day after surgery.",
     "Restart {brand} 72h after the procedure pending surgical clearance.",
 ]
+CONTINUE_LINES = [
+    "Continue {brand} through surgery without interruption; no doses are to be held before or after the procedure.",
+    "Continue {generic} perioperatively; the procedure carries negligible bleeding risk.",
+    "{brand} may be continued uninterrupted through the perioperative period.",
+    "Do not hold {generic} before or after the procedure.",
+]
+CONTINUE_VAGUE_LINES = ["Continue {brand}.", "Continue home {generic} {dose}.", "{brand} to be continued."]
 DEFERRED_LINES = [
     "Perioperative management of {generic} per the surgical team.",
     "Defer to surgery regarding interruption of {brand}.",
@@ -161,7 +168,7 @@ RNS = ["K. Alvarez, RN", "M. Brown, BSN, RN", "T. Osei, RN"]
 HP_OUTCOMES = ["ok", "ok", "ok", "boundary_ok", "boundary_fail", "outdated", "missing", "wellness_only"]
 CONSENT_OUTCOMES = ["signed", "signed", "signed", "unsigned", "missing", "wrong_procedure", "superseded"]
 LAB_OUTCOMES = ["ok", "ok", "ok", "boundary_ok", "boundary_fail", "outdated", "missing", "eie_fallback_ok", "eie_fallback_outdated", "bmp_only"]
-ANTICOAG_OUTCOMES = ["none", "none", "antiplatelet", "full_plan", "full_plan", "no_plan", "hold_only", "deferred", "stale", "inactive", "patient_reported_no_plan", "patient_reported_plan", "unknown_status"]
+ANTICOAG_OUTCOMES = ["none", "none", "antiplatelet", "full_plan", "full_plan", "no_plan", "hold_only", "deferred", "stale", "inactive", "patient_reported_no_plan", "patient_reported_plan", "unknown_status", "continue_plan", "continue_vague"]
 VITAL_OUTCOMES = ["normal", "normal", "normal", "bp_text_excl", "bp_struct_excl", "recheck_clears", "recheck_still_high", "temp_c_excl", "temp_c_borderline_ok", "temp_f_excl", "missing_temp", "missing_all", "flowsheet_struct_ok", "dbp_exact_110", "sbp_exact_180", "temp_exact_100_4", "old_high_newer_normal"]
 DATE_OUTCOMES = ["ok"] * 9 + ["missing"]
 RISK_OUTCOMES = ["known"] * 8 + ["missing", "unknown_string"]
@@ -323,6 +330,12 @@ def generate(seed: int) -> tuple[dict[str, Any], Scenario]:
     elif sc.anticoag == "full_plan":
         meds.append({"name": f"{rng.choice([brand, generic])} {dose}", "active": True})
         docs.append(plan_doc([fmt(rng.choice(HOLD_LINES)), fmt(rng.choice(RESUME_LINES))]))
+    elif sc.anticoag == "continue_plan":
+        meds.append({"name": f"{rng.choice([brand, generic])} {dose}", "active": True})
+        docs.append(plan_doc([fmt(rng.choice(CONTINUE_LINES)), "No bridging required."]))
+    elif sc.anticoag == "continue_vague":
+        meds.append({"name": f"{rng.choice([brand, generic])} {dose}", "active": True})
+        docs.append(plan_doc([fmt(rng.choice(CONTINUE_VAGUE_LINES))])); cats.add("ANTICOAGULATION_MANAGEMENT")
     elif sc.anticoag == "no_plan":
         meds.append({"name": f"{rng.choice([brand, generic])} {dose}", "active": True}); cats.add("ANTICOAGULATION_MANAGEMENT")
     elif sc.anticoag == "hold_only":

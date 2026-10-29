@@ -234,6 +234,11 @@ and `provenance` (policy version, extractor, model, prompt version, cache hits).
   favor of the structured value, recorded as an assumption. Two free-text
   readings with the identical timestamp resolve to the one later in the
   document, recorded as an assumption when their values differ.
+- A plan that continues the anticoagulant satisfies the rule when the sentence
+  says so perioperatively ("through surgery", "without interruption",
+  "before or after"), because an uninterrupted drug is managed before and after.
+  A bare "continue apixaban" is vague and stays an incomplete plan. The output
+  records the continue instruction as an assumption so the nurse sees it.
 - A hold or restart instruction counts as specific only when its timing sits in
   the same sentence. A period ends a sentence except between two digits, so a
   decimal dose ("2.5 mg") stays inside the sentence.

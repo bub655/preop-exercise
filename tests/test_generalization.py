@@ -297,3 +297,48 @@ def test_decimal_dose_inside_plan_sentence_is_still_specific() -> None:
 def test_period_between_digits_only_does_not_cross_sentences() -> None:
     assert _label(SpanKind.ANTICOAG_RESUME, "Resume Xarelto when cleared by the surgeon; timing to be determined. Ice to wrist for 48 hours.") != "SPECIFIC"
     assert _label(SpanKind.ANTICOAG_HOLD, "Hold warfarin per cardiology.2 days before surgery is the usual.") != "SPECIFIC"
+
+
+# --- CONTINUE plans (held-out case 01) ----------------------------------------------------
+
+CONTINUE_LINE = "Continue Eliquis through surgery without interruption; no doses are to be held before or after the procedure."
+
+
+@pytest.mark.parametrize("quote", [
+    CONTINUE_LINE,
+    "Continue apixaban perioperatively.",
+    "Continue warfarin without interruption.",
+    "Patient may continue Xarelto before and after the procedure.",
+    "Continue Pradaxa through surgery.",
+])
+def test_continue_with_perioperative_phrase_is_specific(quote: str) -> None:
+    assert _label(SpanKind.ANTICOAG_CONTINUE, quote) == "SPECIFIC"
+
+
+@pytest.mark.parametrize("quote", ["Continue apixaban.", "Continue Eliquis 5 mg BID.", "Continue home Xarelto."])
+def test_bare_continue_is_vague(quote: str) -> None:
+    assert _label(SpanKind.ANTICOAG_CONTINUE, quote) == "VAGUE"
+
+
+def _plan_facts(text: str):
+    docs = {"p": Doc("p", "Cardiology Consultation", "2026-02-22", "MD", text, 0)}
+    kept, _ = ground_spans(RULES.extract("p", None, text), {"p": text})
+    tf, flags = spans_to_facts(kept, docs, POLICY)
+    assert flags == []
+    doc_fact = F("DOC", {"type": "Cardiology Consultation", "date": "2026-02-22", "author": "MD", "index": 5}, datetime(2026, 2, 22), "documents[5]", doc_id="p")
+    return [doc_fact] + [f for f in tf if f.kind != "DOC_KIND"]
+
+
+def test_specific_continue_plan_satisfies_r3_with_assumption() -> None:
+    text = f"CARDIOLOGY CONSULTATION\nHPI: maintained on Eliquis 5 mg BID.\nRECOMMENDATIONS:\n  1. {CONTINUE_LINE}\n  2. No bridging required.\n"
+    res = evaluate(base_facts(extra=[_med("apixaban 5 mg PO BID", "apixaban", "anticoagulant", True)] + _plan_facts(text)), [], POLICY)
+    assert res.decision == "READY"
+    assert {c.rule_id: c.status for c in res.checks}["R3"] == "PASS"
+    assert any("continue" in a.text.lower() and CONTINUE_LINE in a.text for a in res.assumptions)
+    assert any(e.quote == CONTINUE_LINE for a in res.assumptions for e in a.evidence)
+
+
+def test_vague_continue_stays_incomplete_plan() -> None:
+    text = "CARDIOLOGY CONSULTATION\nHPI: maintained on Eliquis 5 mg BID.\nRECOMMENDATIONS:\n  1. Continue Eliquis.\n"
+    res = evaluate(base_facts(extra=[_med("apixaban 5 mg PO BID", "apixaban", "anticoagulant", True)] + _plan_facts(text)), [], POLICY)
+    assert cats(res) == ["ANTICOAGULATION_MANAGEMENT"] and res.issues[0].status == "INCOMPLETE_PLAN"

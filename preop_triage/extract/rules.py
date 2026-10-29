@@ -16,7 +16,7 @@ from ..policy import Policy
 _SENTENCE_SPLIT = re.compile(r"(?<=[.;])\s+(?=[A-Z])")
 
 # Kinds whose quote is the containing sentence rather than the bare match.
-SENTENCE_KINDS = {SpanKind.ANTICOAG_HOLD, SpanKind.ANTICOAG_RESUME, SpanKind.ANTICOAG_DEFERRED}
+SENTENCE_KINDS = {SpanKind.ANTICOAG_HOLD, SpanKind.ANTICOAG_RESUME, SpanKind.ANTICOAG_CONTINUE, SpanKind.ANTICOAG_DEFERRED}
 
 
 def _line_bounds(text: str, pos: int) -> tuple[int, int]:

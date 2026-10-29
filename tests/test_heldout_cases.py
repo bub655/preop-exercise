@@ -36,3 +36,9 @@ def test_guardian_signed_consent_is_ready_with_assumption() -> None:
     assert res.decision == "READY" and kind == "ok"
     assert any("on behalf of the patient" in a.text or "guardian" in a.text.lower() for a in res.assumptions)
     assert any("Maria Lopez" in (e.quote or "") for a in res.assumptions for e in a.evidence)
+
+
+def test_continue_through_surgery_plan_is_ready_with_assumption() -> None:
+    res, kind = _results()["heldout_01_continue_through_surgery"]
+    assert res.decision == "READY" and kind == "ok"
+    assert any("without interruption" in a.text for a in res.assumptions)

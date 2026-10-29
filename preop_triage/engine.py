@@ -377,6 +377,7 @@ def _r3_anticoag(ctx: _Ctx) -> None:
 
     holds = ctx.by_kind.get("ANTICOAG_HOLD", [])
     resumes = ctx.by_kind.get("ANTICOAG_RESUME", [])
+    continues = ctx.by_kind.get("ANTICOAG_CONTINUE", [])
     deferred = [f for f in ctx.by_kind.get("ANTICOAG_DEFERRED", []) if f.value["canonical"] or _ANTICOAG_CONTEXT.search(f.quote or "")]
     fail = False
     pass_ev: list[Evidence] = []
@@ -384,6 +385,17 @@ def _r3_anticoag(ctx: _Ctx) -> None:
         return [f for f in facts_ if f.value["label"] == "SPECIFIC" and (f.value["canonical"] == canon or (f.value["canonical"] is None and f.value.get("doc_canonical") == canon))]
 
     for canon, ev in active.items():
+        cont = _for(continues, canon)
+        if cont:
+            # Policy: the plan must describe management before and after. "Not interrupted" answers both.
+            line = cont[0]
+            ctx.assume(
+                f"Plan says to continue {canon} through the perioperative period rather than hold and restart it: {line.quote!r}. "
+                "Treated as a complete plan because an uninterrupted drug is managed before and after the procedure.",
+                [ctx.evidence(line)],
+            )
+            pass_ev.append(ctx.evidence(line))
+            continue
         h = _for(holds, canon)
         r = _for(resumes, canon)
         pair = next(((hh, rr) for hh in h for rr in r if hh.doc_id == rr.doc_id), None)
@@ -394,8 +406,8 @@ def _r3_anticoag(ctx: _Ctx) -> None:
             pass_ev += [ctx.evidence(pair[0]), ctx.evidence(pair[1])]
             continue
         fail = True
-        other_plan = [f for f in holds + resumes if f.value["canonical"] not in (None, canon) and f.value["label"] == "SPECIFIC"]
-        any_mention = [f for f in holds + resumes + deferred if f.value["canonical"] in (None, canon)]
+        other_plan = [f for f in holds + resumes + continues if f.value["canonical"] not in (None, canon) and f.value["label"] == "SPECIFIC"]
+        any_mention = [f for f in holds + resumes + continues + deferred if f.value["canonical"] in (None, canon)]
         plan_ev = [ctx.evidence(f) for f in any_mention]
         if h or r:
             missing = "restart" if h else "hold"

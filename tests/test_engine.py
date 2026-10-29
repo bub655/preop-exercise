@@ -303,3 +303,39 @@ def test_vital_without_timestamp_is_unverified() -> None:
     nots = F("BP", (120, 80), None, "documents[2]", doc_id="n", quote="BP 120/80", parser="text_bp")
     res = evaluate(base_facts(extra=[nots]), [], POLICY)
     assert res.decision == "NEEDS_FOLLOW_UP" and cats(res) == ["MISSING_REQUIRED_DATA"]
+
+
+def _mention(canonical: str, label: str, when: datetime, quote: str) -> Fact:
+    return F("MED_MENTION", {"canonical": canonical, "class": "anticoagulant", "label": label}, when, "documents[3]", doc_id="n", quote=quote, parser="text")
+
+
+def test_deferred_without_anticoag_context_is_ignored() -> None:
+    boilerplate = F("ANTICOAG_DEFERRED", {"canonical": None, "label": "DEFERRED"}, datetime(2026, 3, 1), "documents[3]", doc_id="n", quote="formal consent per surgical team.", parser="text")
+    res = evaluate(base_facts(extra=[_med("Xarelto", "rivaroxaban", "anticoagulant", True), boilerplate]), [], POLICY)
+    assert cats(res) == ["ANTICOAGULATION_MANAGEMENT"] and res.issues[0].status == "NO_PLAN"
+
+
+def test_deferred_with_anticoag_context_counts() -> None:
+    deferred = F("ANTICOAG_DEFERRED", {"canonical": None, "label": "DEFERRED"}, datetime(2026, 3, 1), "documents[3]", doc_id="n", quote="Perioperative anticoagulation to be determined by the surgical team.", parser="text")
+    res = evaluate(base_facts(extra=[_med("Xarelto", "rivaroxaban", "anticoagulant", True), deferred]), [], POLICY)
+    assert res.issues[0].status == "INCOMPLETE_PLAN"
+
+
+def test_older_taking_mention_superseded_no_conflict() -> None:
+    old = _mention("warfarin", "TAKING", datetime(2026, 2, 6), "maintained on warfarin")
+    new = _mention("warfarin", "NOT_TAKING", datetime(2026, 3, 17), "warfarin was stopped")
+    res = evaluate(base_facts(extra=[_med("warfarin", "warfarin", "anticoagulant", False), old, new]), [], POLICY)
+    assert res.decision == "READY" and res.review_flags == []
+
+
+def test_latest_taking_mention_conflicts_with_inactive_list() -> None:
+    new = _mention("warfarin", "TAKING", datetime(2026, 3, 17), "maintained on warfarin")
+    res = evaluate(base_facts(extra=[_med("warfarin", "warfarin", "anticoagulant", False), new]), [], POLICY)
+    assert any(f.reason == "MED_STATUS_CONFLICT" and f.quote == "maintained on warfarin" for f in res.review_flags)
+
+
+def test_unlisted_drug_latest_mention_wins() -> None:
+    old = _mention("apixaban", "TAKING", datetime(2026, 2, 6), "maintained on Eliquis")
+    new = _mention("apixaban", "NOT_TAKING", datetime(2026, 3, 17), "Eliquis was stopped")
+    res = evaluate(base_facts(extra=[old, new]), [], POLICY)
+    assert res.decision == "READY"

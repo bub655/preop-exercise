@@ -106,7 +106,6 @@ patterns:
       - 'recommend the surgical team discuss'
       - 'will be addressed after surgery'
       - 'defer(?:red)? to (?:the )?surgical team'
-      - 'per surgical team'
   med_mention:
     TAKING:
       - '(?:also reports taking|reports taking|maintained on|replaced with|switched to|transitioned to|currently (?:on|taking))\s+{DRUG}'

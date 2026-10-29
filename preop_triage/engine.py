@@ -6,6 +6,7 @@ source path or a grounded quote. Rules that cannot be evaluated fail closed.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal
@@ -297,6 +298,18 @@ def _r2_testing(ctx: _Ctx, pdate: date | None, risk: str | None) -> None:
         ctx.check("R2", "PASS", f"Required tests for {risk} risk within {window} days", ev_all)
 
 
+_ANTICOAG_CONTEXT = re.compile(r"anticoag|interrupt|periprocedural|perioperative|\bhold|resum|restart|bridg", re.IGNORECASE)
+
+
+def _latest_mentions(mentions: list[Fact]) -> list[Fact]:
+    """The most recent note wins; undated mentions only count when nothing is dated."""
+    dated = [m for m in mentions if m.observed_at is not None]
+    if not dated:
+        return mentions
+    newest = max(m.observed_at for m in dated)  # type: ignore[type-var]
+    return [m for m in dated if m.observed_at == newest]
+
+
 def _r3_anticoag(ctx: _Ctx) -> None:
     meds = [f for f in ctx.by_kind.get("MED", []) if f.value["class"] == "anticoagulant"]
     mentions = [f for f in ctx.by_kind.get("MED_MENTION", []) if f.value["class"] in ("anticoagulant",) and f.value["canonical"]]
@@ -307,30 +320,33 @@ def _r3_anticoag(ctx: _Ctx) -> None:
         ev = [ctx.ev_path(m.source, m.value["name"])]
         status = m.value["active"]
         related = [x for x in mentions if x.value["canonical"] == canon]
+        latest = _latest_mentions(related)
+        labels = {x.value["label"] for x in latest}
         if status is True:
             active.setdefault(canon, []).extend(ev)
         elif status is False:
-            if any(x.value["label"] == "TAKING" for x in related):
-                ctx.flags.append(ReviewFlag("MED_STATUS_CONFLICT", related[0].doc_id, related[0].quote, None, None, "R3"))
+            if "TAKING" in labels:
+                taking = next(x for x in latest if x.value["label"] == "TAKING")
+                ctx.flags.append(ReviewFlag("MED_STATUS_CONFLICT", taking.doc_id, taking.quote, None, None, "R3"))
+            elif len(related) > len(latest):
+                ctx.assume(f"{canon}: older notes mention it, but the medication list and the most recent note agree it is not being taken.", [ctx.evidence(x) for x in latest])
         else:
-            labels = {x.value["label"] for x in related}
             if labels == {"TAKING"}:
-                ctx.assume(f"{canon}: medication list status blank; treated as active because a note says the patient is taking it.", [ctx.evidence(x) for x in related])
-                active.setdefault(canon, []).extend(ev + [ctx.evidence(x) for x in related])
+                ctx.assume(f"{canon}: medication list status blank; treated as active because the most recent note says the patient is taking it.", [ctx.evidence(x) for x in latest])
+                active.setdefault(canon, []).extend(ev + [ctx.evidence(x) for x in latest])
             elif labels == {"NOT_TAKING"}:
-                ctx.assume(f"{canon}: medication list status blank; treated as inactive because a note says it was stopped.", [ctx.evidence(x) for x in related])
+                ctx.assume(f"{canon}: medication list status blank; treated as inactive because the most recent note says it was stopped.", [ctx.evidence(x) for x in latest])
             else:
                 unknown[canon] = ev + [ctx.evidence(x) for x in related]
     listed = {(m.value["canonical"] or m.value["name"]) for m in meds}
-    for x in mentions:
-        canon = x.value["canonical"]
-        if canon in listed:
-            continue
-        if x.value["label"] == "TAKING":
-            ctx.assume(f"{canon}: absent from the medication list but patient-reported as taken in a note; treated as active.", [ctx.evidence(x)])
-            active.setdefault(canon, []).append(ctx.evidence(x))
-        elif x.value["label"] == "UNKNOWN":
-            unknown.setdefault(canon, []).append(ctx.evidence(x))
+    for canon in sorted({x.value["canonical"] for x in mentions} - listed):
+        latest = _latest_mentions([x for x in mentions if x.value["canonical"] == canon])
+        labels = {x.value["label"] for x in latest}
+        if labels == {"TAKING"}:
+            ctx.assume(f"{canon}: absent from the medication list but patient-reported as taken in a note; treated as active.", [ctx.evidence(x) for x in latest])
+            active.setdefault(canon, []).extend(ctx.evidence(x) for x in latest)
+        elif "UNKNOWN" in labels or len(labels) > 1:
+            unknown.setdefault(canon, []).extend(ctx.evidence(x) for x in latest)
 
     for canon, ev in unknown.items():
         ctx.issue("R0", "ANTICOAG_STATUS_UNKNOWN", f"Cannot determine whether the patient is currently taking {canon}.", ev, f"Confirm whether the patient is taking {canon}; if so, obtain a perioperative plan.")
@@ -343,7 +359,7 @@ def _r3_anticoag(ctx: _Ctx) -> None:
 
     holds = ctx.by_kind.get("ANTICOAG_HOLD", [])
     resumes = ctx.by_kind.get("ANTICOAG_RESUME", [])
-    deferred = ctx.by_kind.get("ANTICOAG_DEFERRED", [])
+    deferred = [f for f in ctx.by_kind.get("ANTICOAG_DEFERRED", []) if f.value["canonical"] or _ANTICOAG_CONTEXT.search(f.quote or "")]
     fail = False
     pass_ev: list[Evidence] = []
     for canon, ev in active.items():

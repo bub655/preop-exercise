@@ -103,6 +103,10 @@ class Policy(BaseModel):
     drugs: DrugTable
     procedure_nouns: list[str]
     procedure_stopwords: list[str] = Field(default_factory=list)
+    consent_proxy_markers: list[str] = Field(default_factory=list)
+
+    def is_proxy_signature(self, quote: str) -> bool:
+        return any(re.search(p, quote, re.IGNORECASE) for p in self.consent_proxy_markers)
     pattern_resolution: PatternResolution = Field(default_factory=PatternResolution)
     patterns: dict[str, dict[str, list[str]]] = Field(default_factory=dict)
 

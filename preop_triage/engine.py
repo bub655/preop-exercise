@@ -252,6 +252,13 @@ def _r1_consent(ctx: _Ctx, ptype: str | None) -> None:
     if signed_matching:
         best = signed_matching[0]
         ev = [ctx.evidence(s) for s in sigs[best.doc_id]] + [ctx.evidence(l) for l in procs[best.doc_id]]
+        proxy = [s for s in sigs[best.doc_id] if s.meta.get("signer") == "proxy"]
+        if proxy:
+            ctx.assume(
+                "Consent was signed by a guardian or healthcare proxy on behalf of the patient, not by the patient; treated as signed. "
+                "Whether the signer had authority is the surgical team's call. Signer text: " + " | ".join((s.quote or "") for s in proxy),
+                [ctx.evidence(s) for s in proxy],
+            )
         ctx.check("R1.2", "PASS", "Signed consent for the scheduled procedure on file", ev)
         return
     if wrong and not signed_unverifiable and not unverifiable_sig:

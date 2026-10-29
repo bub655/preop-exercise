@@ -125,7 +125,8 @@ def spans_to_facts(spans: list[Span], docs: dict[str, Doc], policy: Policy) -> t
             flags.append(_flag(span, flag.reason, flag.code_label))
             continue
         if span.kind == SpanKind.CONSENT_SIGNATURE:
-            facts.append(_text_fact("CONSENT_SIG", label, span, when, "text"))
+            meta = {"signer": "proxy"} if label == "SIGNED" and policy.is_proxy_signature(span.quote) else {}
+            facts.append(_text_fact("CONSENT_SIG", label, span, when, "text", meta))
         elif span.kind == SpanKind.CONSENT_PROCEDURE:
             line = re.sub(r"^Procedure:\s*", "", span.quote, flags=re.IGNORECASE).strip()
             facts.append(_text_fact("CONSENT_PROC", line, span, when, "text"))

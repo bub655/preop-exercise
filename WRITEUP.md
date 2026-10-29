@@ -216,6 +216,12 @@ and `provenance` (policy version, extractor, model, prompt version, cache hits).
   `MISSING_REQUIRED_DATA`, not an anticoagulation issue, and R3 is skipped.
 - Consent must name the scheduled procedure. Any signed, matching consent
   satisfies the rule regardless of earlier unsigned forms.
+- A consent signed by a legal guardian or healthcare proxy on behalf of the
+  patient counts as signed. Whether the signer had authority is the surgical
+  team's call, so the output records who signed as an assumption.
+- A medication mention counts as "taking" only when anchored to a reporting
+  verb or an explicit status phrase. A bare "takes X" is not a mention, because
+  it would also match "no longer takes X".
 - A plan needs both a hold and a restart with timing, in the same document,
   naming the drug the patient actually takes. Deferral to another team is not a
   plan.

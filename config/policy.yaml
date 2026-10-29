@@ -110,6 +110,10 @@ procedure_nouns:
   - hemorrhoidectomy
   - cataract
   - whipple
+# Markers that a SIGNED consent was signed by someone other than the patient. Recorded as an
+# assumption so the reviewing nurse sees who signed.
+consent_proxy_markers: ['legal guardian', '\bguardian\b', 'health\s*care proxy', 'healthcare proxy', 'power of attorney', '\bPOA\b', 'surrogate', 'next of kin', 'on behalf of the patient']
+
 procedure_stopwords: [elective, repair, procedure, surgery, surgical, operation, planned, scheduled, with, without, total, partial, open, laparoscopic, robotic, assisted, minimally, invasive, left, right, bilateral, revision, primary]
 
 # Phrase patterns. Regex, case-insensitive. "{DRUG}" expands to every drug name above.
@@ -163,6 +167,11 @@ patterns:
       - 'electronic consent obtained and signed'
       - '\be-?signed\b'
       - 'signed and dated'
+      # A guardian or healthcare proxy signing on the patient's behalf counts as signed. Whether the
+      # signer had authority is the surgical team's call; the engine records who signed as an assumption.
+      - 'signed by:?\s*[A-Za-z][^\n,]{1,60},\s*(?:legal guardian|guardian|health\s*care proxy|healthcare proxy|power of attorney|POA|surrogate|next of kin|parent)'
+      - 'signed[^\n.;]{0,60}on behalf of the patient'
+      - 'on behalf of the patient[^\n.;]{0,60}(?:signed|signature)'
     UNSIGNED:
       - 'not (?:yet )?(?:been )?signed'
       - 'has not signed'
@@ -227,11 +236,12 @@ patterns:
       - 'maintained on\s+{DRUG}'
       - '(?:replaced with|switched to|transitioned to|now on|started on|changed to)\s+{DRUG}'
       - '{DRUG}[^\n.;]{0,60}taking as prescribed'
-      - '\btakes\s+(?:the\s+)?{DRUG}'
+      # NOTE: no bare "takes {DRUG}". It would match "no longer takes Eliquis"; a mention of taking
+      # must be anchored to a reporting verb (first pattern) or an explicit status phrase.
       - 'currently (?:on|taking)\s+{DRUG}'
       - '{DRUG}[^\n.;]{0,30}(?:per patient|patient-reported|not on (?:the )?(?:reconciled )?med(?:ication)? list)'
     NOT_TAKING:
-      - '(?:\boff|stopped|discontinued|no longer (?:on|taking)|not (?:currently )?(?:on|taking))\s+(?:the\s+|her\s+|his\s+)?{DRUG}'
+      - '(?:\boff|stopped|discontinued|no longer (?:on|taking|takes)|not (?:currently )?(?:on|taking))\s+(?:the\s+|her\s+|his\s+)?{DRUG}'
       - '{DRUG}[^\n.;]{0,60}(?:was |has been |were )?(?:stopped|discontinued|held indefinitely)'
       - 'Discontinued:\s*{DRUG}'
       - 'completed[^\n.;]{0,40}(?:course of |months of |weeks of )?{DRUG}'

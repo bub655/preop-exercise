@@ -245,3 +245,42 @@ def test_invariants_accept_structured_celsius_exclusion() -> None:
     sub = {"vitals": [{"type": "temp", "value_c": 38.6, "date": "2026-03-24T09:00:00Z"}]}
     out = TriageOutput(decision="NOT_CLEARED", issues=[Issue(category="ACUTE_SAFETY_EXCLUSION", rule_id="R4", status="TEMP_EXCLUSION", summary="s", evidence=[Evidence(source="vitals[0]")])])
     assert check_invariants(out, {}, sub, POLICY).decision == "NOT_CLEARED"
+
+
+# --- guardian / proxy signatures -----------------------------------------------------
+
+
+@pytest.mark.parametrize("quote", [
+    "Signed by: Maria Lopez, legal guardian and healthcare proxy, on behalf of the patient",
+    "Signed by Jose Ortiz, healthcare proxy, on 03/12/2026.",
+    "Consent signed on behalf of the patient by her daughter (POA).",
+])
+def test_guardian_or_proxy_signature_is_signed(quote: str) -> None:
+    assert _label(SpanKind.CONSENT_SIGNATURE, quote) == "SIGNED"
+
+
+def test_proxy_signature_fact_records_signer() -> None:
+    text = "INFORMED CONSENT\nProcedure: carpal tunnel release\nSigned by: Maria Lopez, legal guardian and healthcare proxy, on behalf of the patient\n"
+    docs = {"c": Doc("c", "Surgical Consent", "2026-02-25", "MD", text, 0)}
+    kept, _ = ground_spans(RULES.extract("c", None, text), {"c": text})
+    facts, flags = spans_to_facts(kept, docs, POLICY)
+    sig = [f for f in facts if f.kind == "CONSENT_SIG"]
+    assert flags == [] and sig and sig[0].value == "SIGNED" and sig[0].meta.get("signer") == "proxy"
+
+
+# --- med mentions stay anchored to a reporting verb ------------------------------------
+
+
+def test_no_longer_takes_is_not_taking() -> None:
+    assert _label(SpanKind.MED_MENTION, "no longer takes Eliquis") == "NOT_TAKING"
+    assert _label(SpanKind.MED_MENTION, "She no longer takes Eliquis since the bleed.") == "NOT_TAKING"
+
+
+def test_bare_takes_without_reporting_verb_is_not_a_mention() -> None:
+    label, flag = classify(Span(SpanKind.MED_MENTION, "d", "takes Eliquis", 0), POLICY)
+    assert label is None and flag is not None
+
+
+def test_reporting_verb_still_anchors_taking() -> None:
+    assert _label(SpanKind.MED_MENTION, "Pt states she takes Eliquis 5 mg twice daily") == "TAKING"
+    assert _label(SpanKind.MED_MENTION, "patient reports he takes Xarelto") == "TAKING"

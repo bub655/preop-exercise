@@ -1,11 +1,3 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.11"
-# dependencies = [
-#   "textual>=1.0.0",
-#   "rich>=13.0.0",
-# ]
-# ///
 
 """Interactive TUI viewer for eval reports."""
 

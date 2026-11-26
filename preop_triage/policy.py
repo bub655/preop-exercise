@@ -1,0 +1,146 @@
+"""Load and validate the policy config. The engine never hard-codes a number."""
+
+from __future__ import annotations
+
+import re
+from decimal import Decimal
+from pathlib import Path
+
+import yaml
+from pydantic import BaseModel, Field, field_validator
+
+DEFAULT_POLICY_PATH = Path(__file__).resolve().parent.parent / "config" / "policy.yaml"
+
+# "[^\n.;]" in a pattern means "stay inside this sentence". A period ends a sentence except when it
+# sits between two digits ("2.5 mg"), so that class expands to allow exactly that case.
+_IN_SENTENCE = r"(?:[^\n.;]|(?<=\d)\.(?=\d))"
+
+
+class Windows(BaseModel):
+    hp_days: int
+    lab_days: dict[str, int]
+
+
+class Thresholds(BaseModel):
+    sbp: int
+    dbp: int
+    temp_f: Decimal
+
+    @field_validator("temp_f", mode="before")
+    @classmethod
+    def _as_decimal(cls, v: object) -> Decimal:
+        return Decimal(str(v))
+
+
+class DrugTable(BaseModel):
+    """Closed table of drug names. classify() is the only way names get meaning."""
+
+    anticoagulant: dict[str, list[str]]
+    antiplatelet: dict[str, list[str]]
+
+    def _index(self) -> list[tuple[str, str, str]]:
+        rows: list[tuple[str, str, str]] = []
+        for cls_name in ("anticoagulant", "antiplatelet"):
+            for canonical, names in getattr(self, cls_name).items():
+                for name in names:
+                    rows.append((name.lower(), canonical, cls_name))
+        # longest names first so "aspirin" wins over "asa" when both appear
+        rows.sort(key=lambda r: -len(r[0]))
+        return rows
+
+    def all_names(self) -> list[str]:
+        return [name for name, _, _ in self._index()]
+
+    def classify(self, text: str) -> tuple[str | None, str]:
+        """Return (canonical_generic, class) for the first known drug in text."""
+        lowered = text.lower()
+        best: tuple[int, int, str, str] | None = None  # (position, -len(name), canonical, class)
+        for name, canonical, cls_name in self._index():
+            m = re.search(rf"\b{re.escape(name)}\b", lowered)
+            if m is None:
+                continue
+            key = (m.start(), -len(name), canonical, cls_name)
+            if best is None or key < best:
+                best = key
+        return (best[2], best[3]) if best else (None, "other")
+
+    def drug_regex(self) -> str:
+        names = sorted({n for n in self.all_names()}, key=len, reverse=True)
+        return "(?:" + "|".join(re.escape(n) for n in names) + ")"
+
+
+class LabCodes(BaseModel):
+    table: dict[str, list[str]]
+    display_patterns: dict[str, list[str]] = Field(default_factory=dict)
+
+    def normalize(self, code: str | None, display: str | None = None) -> str | None:
+        """Canonical policy code from an alias (exact) or display text (pattern); else the upper-cased code."""
+        text_code = (code or "").strip()
+        upper = text_code.upper()
+        if upper:
+            for canonical, aliases in self.table.items():
+                if upper == canonical or upper in {str(a).upper() for a in aliases}:
+                    return canonical
+        for canonical, patterns in self.display_patterns.items():
+            for p in patterns:
+                rx = re.compile(p, re.IGNORECASE)
+                if (text_code and rx.search(text_code)) or (display and rx.search(display)):
+                    return canonical
+        return upper or None
+
+
+class PatternResolution(BaseModel):
+    negation_wins: dict[str, list[str]] = Field(default_factory=dict)
+    first_match_wins: list[str] = Field(default_factory=list)
+
+
+class Policy(BaseModel):
+    version: str
+    effective_date: str
+    windows: Windows
+    required_tests_by_risk: dict[str, list[str]]
+    thresholds: Thresholds
+    lab_codes: LabCodes
+    lab_final_statuses: list[str]
+    vital_types: dict[str, list[str]] = Field(default_factory=dict)
+    ignored_vital_types: list[str] = Field(default_factory=list)
+    drugs: DrugTable
+    procedure_nouns: list[str]
+    procedure_stopwords: list[str] = Field(default_factory=list)
+    consent_proxy_markers: list[str] = Field(default_factory=list)
+
+    def is_proxy_signature(self, quote: str) -> bool:
+        return any(re.search(p, quote, re.IGNORECASE) for p in self.consent_proxy_markers)
+    pattern_resolution: PatternResolution = Field(default_factory=PatternResolution)
+    patterns: dict[str, dict[str, list[str]]] = Field(default_factory=dict)
+
+    def vital_kind(self, vtype: str | None) -> str | None:
+        """'BP', 'TEMP', 'IGNORE', or None for an unrecognized type."""
+        key = (vtype or "").strip().lower().replace("-", "_")
+        for kind, names in self.vital_types.items():
+            if key in {n.lower() for n in names} or key.replace("_", " ") in {n.lower() for n in names}:
+                return kind
+        if key in {n.lower() for n in self.ignored_vital_types}:
+            return "IGNORE"
+        return None
+
+    def compiled(self, group: str, label: str) -> list[re.Pattern[str]]:
+        """Compile a pattern list with {DRUG} expanded. Cached per instance."""
+        cache = self.__dict__.setdefault("_compiled_cache", {})
+        key = (group, label)
+        if key not in cache:
+            drug = self.drugs.drug_regex()
+            cache[key] = [
+                re.compile(p.replace("{DRUG}", drug).replace("[^\\n.;]", _IN_SENTENCE), re.IGNORECASE | re.MULTILINE)
+                for p in self.patterns.get(group, {}).get(label, [])
+            ]
+        return cache[key]
+
+    def labels(self, group: str) -> list[str]:
+        return list(self.patterns.get(group, {}).keys())
+
+
+def load_policy(path: Path | None = None) -> Policy:
+    raw = yaml.safe_load((path or DEFAULT_POLICY_PATH).read_text(encoding="utf-8"))
+    raw["lab_codes"] = {"table": raw["lab_codes"], "display_patterns": raw.pop("lab_display_patterns", {})}
+    return Policy.model_validate(raw)

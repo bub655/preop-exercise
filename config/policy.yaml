@@ -1,0 +1,290 @@
+# Cadence Surgical Center Pre-Operative Scheduling Policy, encoded.
+# Every number, table, and phrase pattern the triage engine uses lives here.
+# Changing policy means changing this file, not the code.
+version: "2026-01-01"
+effective_date: "2026-01-01"
+
+windows:
+  hp_days: 30            # Rule 1: H&P within 30 days of procedure date (inclusive)
+  lab_days:              # Rule 2: lab windows by procedure risk (inclusive)
+    LOW: 30
+    MODERATE: 30
+    HIGH: 14
+
+required_tests_by_risk:  # Rule 2
+  LOW: [CBC]
+  MODERATE: [CBC]
+  HIGH: [CBC, CMP]
+
+thresholds:              # Rule 4
+  sbp: 180               # systolic >= 180 mmHg
+  dbp: 110               # diastolic >= 110 mmHg
+  temp_f: "100.4"        # temperature > 100.4 F (strict)
+
+# Lab code normalization. Aliases are exact (case-insensitive) matches on the code, including
+# CPT codes. Display patterns are regexes tried against code and display text when no alias
+# matches. BMP is deliberately NOT an alias of CMP.
+lab_codes:
+  CBC: [CBC, LAB-CBC, CBC W DIFF, CBC WITH DIFF, CBC W/ DIFF, CBC/DIFF, CBCD, "85025", "85027"]
+  CMP: [CMP, LAB-CMP, CMP14, CMP-14, CHEM14, CHEM-14, "80053"]
+  BMP: [BMP, LAB-BMP, BMP8, CHEM7, CHEM-7, CHEM8, "80048"]
+lab_display_patterns:
+  CBC: ['complete blood count', '\bcbc\b', 'hemogram']
+  CMP: ['comprehensive metabolic', '\bcmp\b', 'chem(?:istry)?\s*-?\s*14']
+  BMP: ['basic metabolic', '\bbmp\b', 'chem(?:istry)?\s*-?\s*[78]\b']
+lab_final_statuses: [final, corrected, amended]
+
+# Structured vital types. Anything not listed here or in ignored_vital_types is flagged.
+vital_types:
+  BP: [blood_pressure, blood pressure, bp, b/p, nibp, arterial_pressure]
+  TEMP: [temperature, temp, t, body_temperature, core_temperature]
+ignored_vital_types: [heart_rate, hr, pulse, pulse_rate, spo2, oxygen_saturation, o2_sat, respiratory_rate, rr, resp_rate, weight, height, bmi, pain, pain_score, glucose]
+
+drugs:
+  anticoagulant:
+    warfarin: [warfarin, coumadin, jantoven]
+    apixaban: [apixaban, eliquis]
+    rivaroxaban: [rivaroxaban, xarelto]
+    dabigatran: [dabigatran, pradaxa]
+    edoxaban: [edoxaban, savaysa, lixiana]
+    enoxaparin: [enoxaparin, lovenox]
+    dalteparin: [dalteparin, fragmin]
+    fondaparinux: [fondaparinux, arixtra]
+    heparin: [heparin, unfractionated heparin]
+    argatroban: [argatroban]
+    bivalirudin: [bivalirudin, angiomax]
+    phenprocoumon: [phenprocoumon, marcumar]
+    acenocoumarol: [acenocoumarol, sintrom]
+  antiplatelet:
+    aspirin: [aspirin, asa, ecotrin, bayer]
+    clopidogrel: [clopidogrel, plavix]
+    ticagrelor: [ticagrelor, brilinta]
+    prasugrel: [prasugrel, effient]
+    dipyridamole: [dipyridamole, persantine, aggrenox]
+    ticlopidine: [ticlopidine, ticlid]
+    cilostazol: [cilostazol, pletal]
+    vorapaxar: [vorapaxar, zontivity]
+
+# Consent matching: multi-word nouns first so "gastric bypass" never matches "coronary artery bypass".
+# When neither side names a listed noun, the classifier falls back to shared content words.
+procedure_nouns:
+  - coronary artery bypass
+  - gastric bypass
+  - sleeve gastrectomy
+  - knee arthroplasty
+  - hip arthroplasty
+  - shoulder arthroplasty
+  - knee arthroscopy
+  - hip arthroscopy
+  - shoulder arthroscopy
+  - rotator cuff
+  - carpal tunnel
+  - hernia repair
+  - aneurysm repair
+  - hepatic lobectomy
+  - colonic resection
+  - spinal fusion
+  - pancreaticoduodenectomy
+  - cholecystectomy
+  - appendectomy
+  - hysterectomy
+  - mastectomy
+  - lumpectomy
+  - prostatectomy
+  - nephrectomy
+  - thyroidectomy
+  - parathyroidectomy
+  - tonsillectomy
+  - adenoidectomy
+  - laminectomy
+  - discectomy
+  - esophagectomy
+  - gastrectomy
+  - colectomy
+  - hemicolectomy
+  - splenectomy
+  - craniotomy
+  - septoplasty
+  - rhinoplasty
+  - cystoscopy
+  - hemorrhoidectomy
+  - cataract
+  - whipple
+# Markers that a SIGNED consent was signed by someone other than the patient. Recorded as an
+# assumption so the reviewing nurse sees who signed.
+consent_proxy_markers: ['legal guardian', '\bguardian\b', 'health\s*care proxy', 'healthcare proxy', 'power of attorney', '\bPOA\b', 'surrogate', 'next of kin', 'on behalf of the patient']
+
+procedure_stopwords: [elective, repair, procedure, surgery, surgical, operation, planned, scheduled, with, without, total, partial, open, laparoscopic, robotic, assisted, minimally, invasive, left, right, bilateral, revision, primary]
+
+# Phrase patterns. Regex, case-insensitive. "{DRUG}" expands to every drug name above.
+# Groups listed under negation_wins resolve a quote that matches several labels toward the
+# listed label order (most negative first). Groups under first_match_wins take the first label
+# in order. Any other multi-label match is ambiguous and goes to human review.
+pattern_resolution:
+  negation_wins:
+    consent_signature: [UNSIGNED, SIGNED]
+    med_mention: [UNKNOWN, NOT_TAKING, TAKING]
+  first_match_wins: [anticoag_hold, anticoag_resume, anticoag_continue]
+
+patterns:
+  doc_title:
+    HP:
+      - '\bh\s*(?:&|and|\+|/)\s*p\b'
+      - 'hist(?:ory)?\s*(?:and|&|/)\s*ph?[hy]*[sy]*i?cal'
+      - 'history\s*(?:and|&)\s*physical'
+      - 'pre-?op(?:erative)?\s+h\s*&\s*p'
+    CONSENT: ['consent']
+  doc_body:
+    PREOP_HP:
+      - 'PREOPERATIVE HISTORY AND PHYSICAL'
+      - 'PRE-?OP(?:ERATIVE)?\s+(?:EVALUATION|ASSESSMENT|H\s*&\s*P|HISTORY|RISK ASSESSMENT|CLEARANCE)'
+      - 'pre-?op(?:erative)?\s+(?:evaluation|assessment|risk assessment|history|clearance|work-?up)'
+      - 'pre-?surgical (?:evaluation|assessment|history)'
+      - 'Planned procedure:'
+      - 'Scheduled procedure:'
+      - 'Surgery planned:'
+      - '(?:prior to|ahead of|before)\s+(?:planned |scheduled |upcoming )?(?:surgery|procedure|[a-z ]{3,40}(?:ectomy|plasty|scopy|otomy|repair|release|extraction|grafting|resection|fusion))'
+    WELLNESS:
+      - 'annual (?:wellness|physical|exam)'
+      - 'establish(?:ing)? care'
+      - 'health maintenance'
+      - 'wellness visit'
+      - 'new patient visit'
+      - 'routine (?:physical|check-?up)'
+  consent_signature:
+    SIGNED:
+      - 'Patient signature on file\s*-\s*signed'
+      - "patient(?:'s)? signature (?:is )?(?:on file|obtained|present|witnessed)"
+      - 'Patient signature:\s*/s/'
+      - 'Signed by patient:\s*[A-Za-z]'
+      - 'signed by (?:the )?patient'
+      - 'signed by [A-Z][a-z]+(?: [A-Z]\.)? [A-Z][a-z]+ \(patient\)'
+      - 'Signature:\s*[A-Za-z][^\n]{0,60}\(patient\)'
+      - 'patient (?:has )?signed'
+      - 'consent (?:form )?(?:was )?signed (?:by|in clinic|and (?:dated|witnessed))'
+      - 'executed by (?:the )?patient'
+      - 'obtained and signed by the patient'
+      - 'electronic consent obtained and signed'
+      - '\be-?signed\b'
+      - 'signed and dated'
+      # A guardian or healthcare proxy signing on the patient's behalf counts as signed. Whether the
+      # signer had authority is the surgical team's call; the engine records who signed as an assumption.
+      - 'signed by:?\s*[A-Za-z][^\n,]{1,60},\s*(?:legal guardian|guardian|health\s*care proxy|healthcare proxy|power of attorney|POA|surrogate|next of kin|parent)'
+      - 'signed[^\n.;]{0,60}on behalf of the patient'
+      - 'on behalf of the patient[^\n.;]{0,60}(?:signed|signature)'
+    UNSIGNED:
+      - 'not (?:yet )?(?:been )?signed'
+      - 'has not signed'
+      - 'declined to sign'
+      - 'refus\w+ to sign'
+      - 'signature[^\n]{0,40}pending'
+      - 'pending[^\n]{0,20}signature'
+      - 'awaiting (?:patient )?(?:signature|completion|consent)'
+      - 'will sign'
+      - '(?:to be|must be|yet to be) signed'
+      - 'NOT COMPLETED'
+      - 'printed for (?:patient )?review'
+      - 'signature[^\n]{0,40}:\s*_{3,}'
+      - '_{4,}'
+      - 'signature line[^\n]{0,40}blank'
+      - 'will return the signed consent'
+      - 'unsigned'
+      - 'no signature'
+      - 'verbal consent only'
+      - 'written consent to be obtained'
+      - 'consent (?:discussion|reviewed) only'
+  anticoag_hold:
+    # Timing must sit in the same sentence as the instruction ([^.;] stops at a sentence boundary).
+    SPECIFIC:
+      - '(?:hold|stop|discontinue|withhold|skip|omit)\s+(?:the\s+|her\s+|his\s+|their\s+)?{DRUG}[^\n.;]*?(?:\d+\s*(?:days?|hours?|hrs?|h)\s*(?:before|prior|pre-?op|preceding|ahead)|last dose[^\n.;]*?\d{1,2}/\d{1,2}/\d{4})'
+      - '{DRUG}[^\n.;]*?(?:to be |should be |will be |is |was )?(?:held|stopped|discontinued|withheld)[^\n.;]*?(?:\d+\s*(?:days?|hours?|hrs?|h)\s*(?:before|prior|pre-?op|preceding)|x\s*\d+\s*days?|starting \d{1,2}/\d{1,2}/\d{4})'
+      - 'last dose (?:of )?{DRUG}[^\n.;]*?\d{1,2}/\d{1,2}/\d{4}'
+      - '(?:stop|hold|discontinue|withhold)\s+(?:the\s+)?{DRUG}[^\n.;]*?\d+\s*days? pre-?op'
+    VAGUE:
+      - '(?:hold|stop|discontinue|withhold|skip|omit)\s+(?:the\s+|her\s+|his\s+|their\s+)?{DRUG}'
+      - '{DRUG}[^\n.;]*?(?:held|stopped|discontinued|withheld)'
+  anticoag_resume:
+    SPECIFIC:
+      - '(?:resume|restart|re-?start|reinitiate|re-?initiate|reinstate|continue)\s+(?:the\s+|her\s+|his\s+|their\s+|home dose of\s+|usual dose of\s+)?{DRUG}[^\n.;]*?(?:\d+\s*(?:-\s*\d+\s*)?(?:hours?|hrs?|h|days?)\s*(?:after|post|following)|post-?op(?:erative)?(?:ly|\s+day)|\bPOD\s*#?\s*\d|evening of|night of|day after|morning after|following (?:morning|day)|once hemostasis)'
+      - '{DRUG}[^\n.;]*?(?:can|may|should|to|will) be (?:resumed|restarted|reinitiated|reinstated|continued)[^\n.;]*?(?:\d+\s*(?:hours?|hrs?|h|days?)|post-?op|POD\s*#?\s*\d|morning after|day after|evening of|night of|following (?:morning|day))'
+      - 'anticoagulation[^\n.;]*?(?:be )?(?:resumed|restarted)[^\n.;]*?(?:\d+\s*(?:hours?|hrs?|h|days?)\s*(?:after|post)|post-?op|POD\s*#?\s*\d|day after|morning after)'
+      - 'resum\w+ (?:of )?{DRUG}[^\n.;]*?(?:\d+\s*(?:hours?|hrs?|h|days?)\s*(?:after|post)|post-?op(?:erative)?(?:ly|\s+day)|POD\s*#?\s*\d)'
+    VAGUE:
+      - '(?:resume|restart|re-?start|reinitiate|reinstate)\s+[^\n.;]{0,30}?{DRUG}'
+      - 'resum\w+[^\n]{0,60}(?:will be addressed|to be determined|TBD)'
+      - 'anticoagulation[^\n.;]*?(?:be )?(?:resumed|restarted)'
+  # A plan that continues the drug satisfies Rule 3: "not interrupted" describes management both
+  # before and after. SPECIFIC only when the sentence carries a perioperative phrase; a bare
+  # "continue apixaban" is VAGUE.
+  anticoag_continue:
+    SPECIFIC:
+      - '(?:continue|continuing|maintain|do not (?:hold|stop|interrupt))\s+(?:the\s+|her\s+|his\s+|their\s+|home\s+|on\s+)?{DRUG}[^\n.;]*?(?:through(?:out)? (?:the )?(?:surgery|procedure|perioperative period)|without interruption|uninterrupted|peri-?operatively|peri-?procedurally|before (?:and|or) after|pre-? ?and post-?op\w*|no doses? (?:are to be |will be |to be )?held)'
+      - '{DRUG}[^\n.;]*?(?:to be |should be |will be |may be |is to be )?continued[^\n.;]*?(?:through(?:out)? (?:the )?(?:surgery|procedure|perioperative period)|without interruption|uninterrupted|peri-?operatively|peri-?procedurally|before (?:and|or) after)'
+    VAGUE:
+      - '(?:continue|continuing|maintain)\s+(?:the\s+|her\s+|his\s+|their\s+|home\s+|on\s+)?{DRUG}'
+      - '{DRUG}[^\n.;]*?(?:to be |should be |will be |may be )?continued'
+  anticoag_deferred:
+    DEFERRED:
+      - 'to be determined by (?:the )?(?:surg\w+|operating surgeon|primary team)'
+      - 'will (?:follow up with|provide) (?:specific )?(?:recommendations|hold/resume recommendations)'
+      - 'recommendations? (?:to follow|will follow|at a later date|forthcoming|pending)'
+      - 'recommend the surgical team discuss'
+      - 'will be addressed (?:after surgery|post-?op\w*|later|at a later time)'
+      - 'defer(?:red)? to (?:the )?(?:surg\w+|operating surgeon|primary team)'
+      # NOTE: a bare "per surgical team" is attribution, not deferral ("Resume X 24-48 hours after
+      # surgery once hemostasis is secure, per surgical team" is a complete plan). Only a
+      # management/decision statement handed to another team counts.
+      - 'plan (?:is )?TBD'
+      - 'to be discussed with (?:the )?surg\w+'
+      - 'management (?:of {DRUG} )?(?:per|by) (?:the )?surg\w+'
+  med_mention:
+    TAKING:
+      - '(?:reports?|states?|endorses?|confirms?|admits?)\s+(?:(?:that\s+)?(?:he|she|they)\s+)?(?:is\s+|are\s+)?(?:still\s+|also\s+|currently\s+)?(?:taking|takes|on|using)\s+(?:the\s+|her\s+|his\s+)?{DRUG}'
+      - 'home (?:medications?|meds) include[^\n.;]{0,40}?{DRUG}'
+      - '(?:currently )?anticoagulated (?:with|on)\s+{DRUG}'
+      - '\bon (?:chronic |long-?term |daily |home )?{DRUG}(?:\s+therapy)?'
+      - 'maintained on\s+{DRUG}'
+      - '(?:replaced with|switched to|transitioned to|now on|started on|changed to)\s+{DRUG}'
+      - '{DRUG}[^\n.;]{0,60}taking as prescribed'
+      # NOTE: no bare "takes {DRUG}". It would match "no longer takes Eliquis"; a mention of taking
+      # must be anchored to a reporting verb (first pattern) or an explicit status phrase.
+      - 'currently (?:on|taking)\s+{DRUG}'
+      - '{DRUG}[^\n.;]{0,30}(?:per patient|patient-reported|not on (?:the )?(?:reconciled )?med(?:ication)? list)'
+    NOT_TAKING:
+      - '(?:\boff|stopped|discontinued|no longer (?:on|taking|takes)|not (?:currently )?(?:on|taking))\s+(?:the\s+|her\s+|his\s+)?{DRUG}'
+      - '{DRUG}[^\n.;]{0,60}(?:was |has been |were )?(?:stopped|discontinued|held indefinitely)'
+      - 'Discontinued:\s*{DRUG}'
+      - 'completed[^\n.;]{0,40}(?:course of |months of |weeks of )?{DRUG}'
+      - 'denies (?:taking )?(?:any )?(?:blood thinners|anticoagulants?|anticoagulation)'
+      - 'not (?:currently |presently )?(?:on )?anticoagulat\w+'
+      - 'not on any anticoagulant'
+      - 'switched from\s+{DRUG}'
+      - 'transitioned (?:off|from)\s+{DRUG}'
+    UNKNOWN:
+      - '(?:unsure|uncertain|unclear) (?:whether|if)[^\n.;]{0,40}{DRUG}'
+      - '{DRUG}:?[^\n.;]{0,40}(?:unable to confirm|could not confirm|compliance uncertain|unclear whether|cannot confirm)'
+      - 'unable to confirm (?:if|whether)[^\n.;]{0,40}{DRUG}'
+      - '{DRUG}:?\s*patient unable to confirm'
+  vitals_deferred:
+    DEFERRED:
+      - 'VITAL SIGNS?:\s*(?:See|refer to)[^\n]{0,30}flowsheet'
+      - 'vitals?:?\s*(?:see|refer to)[^\n]{0,30}flowsheet'
+      - 'VITAL SIGNS?:\s*Deferred'
+      - '\bVS deferred'
+      - 'vitals? (?:signs? )?(?:were |was )?(?:deferred|not (?:obtained|recorded|taken|measured))'
+      - 'vital signs? (?:were |was )?not (?:obtained|recorded|taken|measured)'
+  doc_absence:
+    HP_ABSENT: ['H\s*&\s*P:?\s*(?:is )?not (?:yet )?on file', 'no H\s*&\s*P on file', 'H\s*&\s*P (?:is )?(?:pending|outstanding)']
+    CONSENT_ABSENT: ['consent[^\n]{0,80}(?:not yet completed|to be obtained|outstanding)', 'no (?:signed )?consent on file']
+  procedure_date_statement:
+    SCHEDULED: ['scheduled for\s*\d{1,2}/\d{1,2}/\d{4}']
+    PENDING: ['date to be determined', 'pending OR availability', 'date (?:is )?(?:TBD|pending)']
+  procedure_risk_statement:
+    PENDING: ['risk category (?:has )?not (?:yet )?(?:been )?assigned', 'risk (?:level|category) (?:is )?(?:pending|TBD)']
+  planned_procedure:
+    PLANNED: ['(?:Planned|Scheduled) procedure:\s*[^\n(]+', 'Surgery planned:\s*[^\n(]+']
+  consent_procedure:
+    PROCEDURE: ['^Procedure:\s*[^\n]+']
+  encounter_kind:
+    PREOP_HP: ['PREOPERATIVE HISTORY AND PHYSICAL', 'pre-?operative evaluation']
+    WELLNESS: ['Encounter:\s*annual wellness[^\n]*', 'establish care']
